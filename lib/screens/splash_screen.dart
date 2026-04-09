@@ -11,7 +11,7 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    initApp();
+    Future.microtask(() => initApp());
   }
 
   void initApp() async {
@@ -26,12 +26,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Center(
-        child: Image.asset(
-          'assets/icons/logo.png',
-          width: 150,
-        ),
-      ),
+      body: Center(child: Image.asset('assets/icons/logo.png', width: 150)),
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../viewmodels/auth_viewmodel.dart';
 
 class OtpScreen extends StatefulWidget {
   const OtpScreen({super.key});
@@ -63,44 +64,31 @@ class _OtpScreenState extends State<OtpScreen> {
     return controllers.map((c) => c.text).join();
   }
 
-  void verifyOtp() async {
-    if (getOtp().length < 6) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Enter full OTP")));
-      return;
-    }
+  final authVM = AuthViewModel();
 
+  void verifyOtp() async {
     setState(() => loading = true);
 
-    try {
-      final res = await apiService.validateOtp(phone, getOtp());
+    final result = await authVM.verifyOtp(phone, getOtp());
 
-      print("VERIFY OTP RESPONSE: $res");
+    if (!mounted) return;
 
-      if (!mounted) return;
+    setState(() => loading = false);
 
-      if (res['status'] == "success") {
-        if (exists) {
-          Navigator.pushReplacementNamed(context, '/home');
-        } else {
-          Navigator.pushReplacementNamed(
-            context,
-            '/register',
-            arguments: {'phone': phone},
-          );
-        }
+    if (result['success']) {
+      if (exists) {
+        Navigator.pushReplacementNamed(context, '/home');
       } else {
-        ScaffoldMessenger.of(
+        Navigator.pushReplacementNamed(
           context,
-        ).showSnackBar(const SnackBar(content: Text("Invalid OTP")));
+          '/register',
+          arguments: {'phone': phone},
+        );
       }
-    } catch (e) {
-      print("REGISTER ERROR: $e"); // 👈 ADD THIS
-
+    } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      ).showSnackBar(SnackBar(content: Text(result['message'])));
     }
   }
 

@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import '../viewmodels/auth_viewmodel.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -61,52 +61,27 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void sendOtp() async {
-    if (phoneController.text.length < 10) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Enter valid number")));
-      return;
-    }
+  final authVM = AuthViewModel();
 
+  void sendOtp() async {
     setState(() => loading = true);
 
-    // STEP 1: identify user
-    final identifyRes = await apiService.identifyUser(phoneController.text);
-
-    print("IDENTIFY RESPONSE: $identifyRes");
-
-    if (!mounted) return;
-
-    if (identifyRes['status'] != "success") {
-      setState(() => loading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Something went wrong")));
-      return;
-    }
-
-    bool exists = identifyRes['response']['exists'];
-
-    // STEP 2: send OTP
-    final res = await apiService.sendOtp(phoneController.text);
-
-    print("SEND OTP RESPONSE: $res");
+    final result = await authVM.sendOtp(phoneController.text);
 
     if (!mounted) return;
 
     setState(() => loading = false);
 
-    if (res['status'] == "success") {
+    if (result['success']) {
       Navigator.pushNamed(
         context,
         '/otp',
-        arguments: {'phone': phoneController.text, 'exists': exists},
+        arguments: {'phone': phoneController.text, 'exists': result['exists']},
       );
     } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to send OTP")));
+      ).showSnackBar(SnackBar(content: Text(result['message'])));
     }
   }
 

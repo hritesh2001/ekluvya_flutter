@@ -82,7 +82,7 @@ class ApiService {
     required String phone,
     required String gender,
     required String preparingFor,
-    required String dob,
+    required DateTime dob,
     File? image,
   }) async {
     var uri = Uri.parse('$baseUrl/auth/register');
@@ -97,8 +97,8 @@ class ApiService {
       "gender": gender,
       "preparing_for": preparingFor,
       "dob":
-          "${dob.day.toString().padLeft(2, '0')}"
-          "${dob.month.toString().padLeft(2, '0')}"
+          "${dob.day.toString().padLeft(2, '0')}/"
+          "${dob.month.toString().padLeft(2, '0')}/"
           "${dob.year}",
       "country_code": "91",
     });

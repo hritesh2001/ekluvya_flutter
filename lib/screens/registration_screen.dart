@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/api_service.dart';
+import '../viewmodels/registration_viewmodel.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -12,7 +13,6 @@ class RegistrationScreen extends StatefulWidget {
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
   final ApiService apiService = ApiService();
-
   final firstName = TextEditingController();
   final lastName = TextEditingController();
   final emailController = TextEditingController();
@@ -48,11 +48,30 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     }
   }
 
+  String getPreparingForValue(String value) {
+    switch (value) {
+      case "IIT FOUNDATION":
+        return "IIT";
+      case "NEET FOUNDATION":
+        return "NEET";
+      case "INTEGRATED":
+        return "CBSE";
+      case "PRIMARY":
+        return "PRIMARY";
+      case "PRE-PRIMARY":
+        return "PREPRIMARY";
+      default:
+        return "CBSE";
+    }
+  }
+
   String getGenderValue(String gender) {
     if (gender == "Male") return "1";
     if (gender == "Female") return "2";
     return "1";
   }
+
+  final regVM = RegistrationViewModel();
 
   void register() async {
     if (phone.isEmpty) {
@@ -61,6 +80,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       );
       return;
     }
+
     if (firstName.text.isEmpty ||
         lastName.text.isEmpty ||
         emailController.text.isEmpty ||
@@ -75,35 +95,27 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
     setState(() => loading = true);
 
-    try {
-      final res = await apiService.registerUser(
-        firstName: firstName.text,
-        lastName: lastName.text,
-        email: emailController.text,
-        phone: phone,
-        gender: getGenderValue(gender!),
-        preparingFor: preparingFor!,
-        dob: dob!,
-        image: image,
-      );
+    final result = await regVM.register(
+      firstName: firstName.text,
+      lastName: lastName.text,
+      email: emailController.text,
+      phone: phone,
+      gender: getGenderValue(gender!),
+      preparingFor: getPreparingForValue(preparingFor!),
+      dob: dob!,
+      image: image,
+    );
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      setState(() => loading = false);
+    setState(() => loading = false);
 
-      if (res['statusCode'] == 200) {
-        Navigator.pushReplacementNamed(context, '/home');
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(res['message'] ?? "Failed")));
-      }
-    } catch (e) {
-      setState(() => loading = false);
-
+    if (result['success']) {
+      Navigator.pushReplacementNamed(context, '/home');
+    } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      ).showSnackBar(SnackBar(content: Text(result['message'])));
     }
   }
 
@@ -197,8 +209,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                             child: buildField(
                               dob == null
                                   ? "DOB"
-                                  : "${dob!.day.toString().padLeft(2, '0')}"
-                                        "${dob!.month.toString().padLeft(2, '0')}"
+                                  : "${dob!.day.toString().padLeft(2, '0')}/"
+                                        "${dob!.month.toString().padLeft(2, '0')}/"
                                         "${dob!.year}",
                               enabled: false,
                             ),
