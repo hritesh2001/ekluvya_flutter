@@ -1,81 +1,187 @@
+import 'dart:async' as dart_async;
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'dart:io';
+
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/constants/app_constants.dart';
+import '../core/errors/app_exception.dart';
+import '../core/utils/logger.dart';
+
 class ApiService {
-  final String baseUrl = "https://stg-ottapi.ekluvya.guru/users/api/v1";
+  static const _tag = 'ApiService';
 
-  Future identifyUser(String phone) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/auth/identify-user'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({"identifier": phone}),
-    );
+  Map<String, String> get _jsonHeaders => {'Content-Type': 'application/json'};
 
-    return jsonDecode(res.body);
+  // ── Error handler ─────────────────────────────────────────────────────────
+
+  Never _handleNetworkError(Object e, StackTrace st, String label) {
+    AppLogger.error(_tag, '$label → ${e.runtimeType}: $e', e, st);
+
+    if (e is dart_async.TimeoutException) throw const RequestTimeoutException();
+    if (e is IOException)                 throw const NetworkException();
+    if (e is http.ClientException) {
+      AppLogger.error(_tag, 'ClientException detail: ${e.message}');
+      final msg = e.message.toLowerCase();
+      if (msg.contains('lookup') || msg.contains('network')) {
+        throw const NetworkException();
+      }
+      throw ServerException('Connection failed: ${e.message}');
+    }
+    throw ServerException('Unexpected error: ${e.runtimeType}');
   }
 
-  Future sendOtp(String phone) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/auth/send-newOtp'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({"code": "91", "is_phone_verified": 0, "to": phone}),
-    );
+  // ── Response decoder ──────────────────────────────────────────────────────
 
-    return jsonDecode(res.body);
+  Map<String, dynamic> _decode(http.Response res, String label) {
+    AppLogger.info(_tag, '$label → ${res.statusCode}');
+    AppLogger.info(_tag, 'BODY: ${res.body}');           // ← full body logged
+
+    if (res.body.trimLeft().startsWith('<!')) {
+      AppLogger.error(_tag, '$label returned HTML — check URL / headers');
+      throw const ParseException();
+    }
+    try {
+      final decoded = jsonDecode(res.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw const ParseException();
+    } on FormatException catch (e) {
+      AppLogger.error(_tag, 'JSON parse failed: $e | body: ${res.body}');
+      throw const ParseException();
+    }
   }
 
-  Future validateOtp(String phone, String otp) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/auth/validate-otp'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({"phone": phone, "otp": otp}),
-    );
+  // ── Generic helpers ───────────────────────────────────────────────────────
 
-    return jsonDecode(res.body);
+  Future<Map<String, dynamic>> _post(
+    String path,
+    Map<String, dynamic> body, {
+    String? overrideUrl,
+    Map<String, String>? headers,
+  }) async {
+    final url = overrideUrl ?? '${AppConstants.usersBaseUrl}$path';
+    AppLogger.info(_tag, 'POST $url | ${jsonEncode(body)}');
+    try {
+      final res = await http
+          .post(Uri.parse(url),
+              headers: headers ?? _jsonHeaders, body: jsonEncode(body))
+          .timeout(AppConstants.apiTimeout);
+      return _decode(res, url);
+    } catch (e, st) {
+      if (e is AppException) rethrow;
+      _handleNetworkError(e, st, 'POST $url');
+    }
   }
 
-  Future resendOtp(String phone) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/auth/send-newOtp'),
-      body: {'phone': phone},
-    );
-
-    return jsonDecode(res.body);
+  Future<Map<String, dynamic>> _get(
+    String path, {
+    String? overrideUrl,
+    Map<String, String>? headers,
+  }) async {
+    final url = overrideUrl ?? '${AppConstants.usersBaseUrl}$path';
+    AppLogger.info(_tag, 'GET $url');
+    try {
+      final res = await http
+          .get(Uri.parse(url), headers: headers)
+          .timeout(AppConstants.apiTimeout);
+      return _decode(res, url);
+    } catch (e, st) {
+      if (e is AppException) rethrow;
+      _handleNetworkError(e, st, 'GET $url');
+    }
   }
 
-  Future googleLogin(String idToken) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({"google_auth_id": idToken}),
-    );
+  // ── Token ─────────────────────────────────────────────────────────────────
 
-    return jsonDecode(res.body);
-  }
-
-  Future getProfile() async {
+  Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
-
-    final res = await http.get(
-      Uri.parse('https://stg-ottapi.ekluvya.guru/mediaview/api/v1/profile'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
-
-    return jsonDecode(res.body);
+    await prefs.setString(AppConstants.tokenKey, token);
   }
 
-  Future fetchCommonFeatures() async {
-    final res = await http.get(
-      Uri.parse('https://stg-ottapi.ekluvya.guru/mediaview/api/v1/common'),
-    );
-
-    return jsonDecode(res.body);
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(AppConstants.tokenKey);
   }
 
-  Future<dynamic> registerUser({
+  Future<void> clearToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(AppConstants.tokenKey);
+  }
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
+
+  /// Step 1 — identify user (tells us if they're new or existing)
+  Future<Map<String, dynamic>> identifyUser(String input) =>
+      _post('/auth/identify-user', {'identifier': input});
+
+  /// Step 2a — send OTP
+  /// Params as per developer docs: code, to, is_phone_verified
+  Future<Map<String, dynamic>> sendOtp(String phone) => _post(
+        '/auth/send-newOtp',
+        {
+          'code': AppConstants.countryCode,   // "+91"
+          'to': phone,
+          'is_phone_verified': 0,
+        },
+      );
+
+  /// Step 3a — verify OTP
+  /// Params as per developer docs: phone, otp, browsername, deviceDetail,
+  /// is_phone_verified
+  Future<Map<String, dynamic>> verifyOtp(String phone, String otp) =>
+      _post('/auth/validate-otp', {
+        'phone': phone,
+        'otp': otp,
+        'browsername': '',                    // empty string per developer docs
+        'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
+        'is_phone_verified': 1,
+      });
+
+  /// Step 4a — phone login (called after OTP is verified)
+  /// Uses 'phone' param — confirmed from browser network trace.
+  /// Developer docs had copy-paste error (showed sendOtp params instead).
+  Future<Map<String, dynamic>> phoneLogin(String phone) =>
+      _post('/auth/phone-login', {
+        'phone': phone,                       // ← correct field name
+        'is_phone_verified': 1,
+        'browsername': '',
+        'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
+      });
+
+  Future<Map<String, dynamic>> googleLogin(String idToken) =>
+      _post('/auth/login', {'google_auth_id': idToken});
+
+  /// Password login for student accounts
+  Future<Map<String, dynamic>> studentLogin({
+    required String username,
+    required String password,
+  }) async {
+    final decoded = await _post(
+      '/auth/student-login',
+      {'username': username, 'password': password},
+    );
+    final ok = decoded['status'] == 'success' || decoded['statusCode'] == 200;
+    if (ok) {
+      final response = decoded['response'];
+      if (response is Map) {
+        final devices = response['get_devices'];
+        if (devices is List && devices.isNotEmpty && devices[0] is Map) {
+          final token = devices[0]['access_token']?.toString();
+          if (token != null && token.isNotEmpty) await saveToken(token);
+        }
+      }
+    }
+    return decoded;
+  }
+
+  // ── Registration ──────────────────────────────────────────────────────────
+
+  /// Params as per developer docs:
+  /// first_name, email, phone, login_type, country_code, iso,
+  /// is_phone_verified, browsername, deviceDetail
+  /// (last_name, gender, dob, preparing_for, profile_picture are optional extras)
+  Future<Map<String, dynamic>> registerUser({
     required String firstName,
     required String lastName,
     required String email,
@@ -85,23 +191,27 @@ class ApiService {
     required DateTime dob,
     File? image,
   }) async {
-    var uri = Uri.parse('$baseUrl/auth/register');
-
-    var request = http.MultipartRequest('POST', uri);
-
-    request.fields.addAll({
-      "first_name": firstName,
-      "last_name": lastName,
-      "email": email,
-      "phone": phone,
-      "gender": gender,
-      "preparing_for": preparingFor,
-      "dob":
-          "${dob.day.toString().padLeft(2, '0')}/"
-          "${dob.month.toString().padLeft(2, '0')}/"
-          "${dob.year}",
-      "country_code": "91",
-    });
+    final uri = Uri.parse('${AppConstants.usersBaseUrl}/auth/register');
+    final request = http.MultipartRequest('POST', uri)
+      ..fields.addAll({
+        // ── Required fields (from developer docs) ──
+        'first_name': firstName,
+        'email': email,
+        'phone': phone,
+        'login_type': 'normal',               // required per developer docs
+        'country_code': AppConstants.countryCode,
+        'iso': 'in',                           // ISO country code per developer docs
+        'is_phone_verified': '1',
+        'browsername': '',
+        'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
+        // ── Optional extras (original fields) ──
+        'last_name': lastName,
+        'gender': gender,
+        'preparing_for': preparingFor,
+        'dob': '${dob.day.toString().padLeft(2, '0')}/'
+            '${dob.month.toString().padLeft(2, '0')}/'
+            '${dob.year}',
+      });
 
     if (image != null) {
       request.files.add(
@@ -109,13 +219,36 @@ class ApiService {
       );
     }
 
-    var response = await request.send();
+    AppLogger.info(_tag, 'POST register | fields: ${request.fields}');
 
-    /// ✅ THIS IS THE CORRECT PART
-    var responseBody = await response.stream.bytesToString();
+    try {
+      final streamed = await request.send().timeout(AppConstants.apiTimeout);
+      final body = await streamed.stream.bytesToString();
+      AppLogger.info(_tag, 'register BODY: $body');
 
-    final decoded = jsonDecode(responseBody);
-
-    return decoded;
+      if (body.trimLeft().startsWith('<!')) throw const ParseException();
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw const ParseException();
+    } catch (e, st) {
+      if (e is AppException) rethrow;
+      _handleNetworkError(e, st, 'POST register');
+    }
   }
+
+  // ── Profile / Media ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getProfile() async {
+    final token = await getToken();
+    return _get(
+      '/profile',
+      overrideUrl: '${AppConstants.mediaBaseUrl}/profile',
+      headers: {'Authorization': 'Bearer ${token ?? ''}'},
+    );
+  }
+
+  Future<Map<String, dynamic>> fetchCommonFeatures() => _get(
+        '/common',
+        overrideUrl: '${AppConstants.mediaBaseUrl}/common',
+      );
 }

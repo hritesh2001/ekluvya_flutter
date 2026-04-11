@@ -1,87 +1,103 @@
-import 'package:flutter/material.dart';
-import '../services/api_service.dart';
 import 'dart:io';
-import 'package:google_sign_in/google_sign_in.dart';
+
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:provider/provider.dart';
+
 import '../viewmodels/auth_viewmodel.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final phoneController = TextEditingController();
-  final ApiService apiService = ApiService();
-  bool loading = false;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final _inputController = TextEditingController();
+  final _googleSignIn = GoogleSignIn();
 
-  Future<void> signInWithGoogle() async {
+  @override
+  void dispose() {
+    _inputController.dispose();
+    super.dispose();
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _signInWithGoogle() async {
+    final authVM = context.read<AuthViewModel>();
     try {
       final account = await _googleSignIn.signIn();
-
-      if (account == null) return;
+      if (account == null) return; // user cancelled
 
       final auth = await account.authentication;
       final idToken = auth.idToken;
 
-      print("GOOGLE TOKEN: $idToken");
-
       if (idToken == null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Google login failed")));
+        _showSnack('Google login failed. Please try again.');
         return;
       }
 
-      final res = await apiService.googleLogin(idToken);
-
-      print("GOOGLE LOGIN RESPONSE: $res");
-
+      final success = await authVM.googleLogin(idToken);
       if (!mounted) return;
 
-      if (res['status'] == "success") {
-        final token = res['response']['access_token'];
-
-        // ✅ SAVE TOKEN
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', token);
-
+      if (success) {
         Navigator.pushReplacementNamed(context, '/home');
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(res['message'] ?? "Login failed")),
-        );
+        _showSnack(authVM.errorMessage ?? 'Google login failed');
       }
     } catch (e) {
-      print("Google error: $e");
+      if (mounted) _showSnack('Google login failed. Please try again.');
     }
   }
 
-  final authVM = AuthViewModel();
+  Future<void> _handleLogin() async {
+    final input = _inputController.text.trim();
+    if (input.isEmpty) {
+      _showSnack('Enter mobile number or admission number');
+      return;
+    }
 
-  void sendOtp() async {
-    setState(() => loading = true);
+    final authVM = context.read<AuthViewModel>();
 
-    final result = await authVM.sendOtp(phoneController.text);
-
+    // Step 1: identify user → get auth method + exists flag
+    final identified = await authVM.identify(input);
     if (!mounted) return;
 
-    setState(() => loading = false);
+    if (identified == null) {
+      _showSnack(authVM.errorMessage ?? 'User not found');
+      return;
+    }
 
-    if (result['success']) {
-      Navigator.pushNamed(
-        context,
-        '/otp',
-        arguments: {'phone': phoneController.text, 'exists': result['exists']},
-      );
+    final method = identified['authMethod'] as String? ?? '';
+    final exists = identified['exists'] as bool? ?? false;
+
+    if (method == 'otp') {
+      // Step 2 (OTP flow): send OTP
+      final sent = await authVM.sendOtp(input);
+      if (!mounted) return;
+
+      if (sent) {
+        Navigator.pushNamed(
+          context,
+          '/otp',
+          // Pass phone + exists flag so OTP screen can decide post-login routing
+          arguments: {'phone': input, 'exists': exists},
+        );
+      } else {
+        _showSnack(authVM.errorMessage ?? 'Failed to send OTP');
+      }
+    } else if (method == 'password') {
+      Navigator.pushNamed(context, '/student-password', arguments: input);
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(result['message'])));
+      _showSnack('Unsupported login method. Please contact support.');
     }
   }
 
@@ -90,7 +106,6 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       body: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [Color(0xFFE91E63), Color(0xFFFF9800)],
@@ -99,139 +114,197 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              /// ❌ Close Button
-              Align(
-                alignment: Alignment.topRight,
-                child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () {
-                    if (Platform.isAndroid) {
-                      SystemNavigator.pop();
-                    } else {
-                      exit(0);
-                    }
-                  },
-                ),
-              ),
-
-              const SizedBox(height: 40),
-
-              /// 📝 Title
-              const Text(
-                "Continue with mobile",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-              const SizedBox(height: 10),
-
-              /// 📄 Subtitle
-              const Text(
-                "Welcome back. Sign in & let’s get started.",
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-              ),
-
-              const SizedBox(height: 40),
-
-              /// 📱 Mobile Input
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    const Text(
-                      "+91",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    const VerticalDivider(),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: phoneController,
-                        keyboardType: TextInputType.phone,
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          hintText: "Enter mobile number",
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              /// 🔘 Login Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: loading ? null : sendOtp,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: loading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("Continue", style: TextStyle(fontSize: 16)),
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              /// OR Divider
-              Row(
-                children: const [
-                  Expanded(child: Divider(color: Colors.white70)),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 10),
-                    child: Text("OR", style: TextStyle(color: Colors.white)),
-                  ),
-                  Expanded(child: Divider(color: Colors.white70)),
-                ],
-              ),
-
-              const SizedBox(height: 30),
-
-              /// 🔵 Google Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: signInWithGoogle,
-                  icon: Image.network(
-                    "https://cdn-icons-png.flaticon.com/512/2991/2991148.png",
-                    height: 20,
-                  ),
-                  label: const Text("Continue with Google"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+          // LayoutBuilder + SingleChildScrollView prevents overflow on small
+          // screens while keeping the gradient full-height on large ones.
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: _LoginBody(
+                    controller: _inputController,
+                    onLogin: _handleLogin,
+                    onGoogle: _signInWithGoogle,
                   ),
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Extracted to a separate widget so [Consumer] only rebuilds the button area,
+/// not the entire screen, when loading state changes.
+class _LoginBody extends StatelessWidget {
+  const _LoginBody({
+    required this.controller,
+    required this.onLogin,
+    required this.onGoogle,
+  });
+
+  final TextEditingController controller;
+  final VoidCallback onLogin;
+  final VoidCallback onGoogle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthViewModel>(
+      builder: (context, authVM, _) {
+        final loading = authVM.isLoading;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Close / exit button
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () {
+                  if (Platform.isAndroid) {
+                    SystemNavigator.pop();
+                  } else {
+                    exit(0);
+                  }
+                },
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            const Text(
+              'Continue',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Login using mobile number or admission number',
+              style: TextStyle(color: Colors.white70),
+            ),
+
+            const SizedBox(height: 40),
+
+            // Dynamic input: shows +91 prefix when a 10-digit number is typed
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (context, value, _) {
+                final isPhone =
+                    RegExp(r'^[0-9]{10}$').hasMatch(value.text);
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      if (isPhone) ...[
+                        const Text(
+                          '+91',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(width: 8),
+                        const SizedBox(
+                          height: 24,
+                          child: VerticalDivider(thickness: 1),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: TextField(
+                          controller: controller,
+                          keyboardType: TextInputType.text,
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            hintText: 'Mobile Number / Admission Number',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: loading ? null : onLogin,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  disabledBackgroundColor: Colors.black54,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: loading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        'Continue',
+                        style: TextStyle(color: Colors.white),
+                      ),
+              ),
+            ),
+
+            const SizedBox(height: 30),
+
+            Row(
+              children: const [
+                Expanded(child: Divider(color: Colors.white70)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: Text('OR', style: TextStyle(color: Colors.white)),
+                ),
+                Expanded(child: Divider(color: Colors.white70)),
+              ],
+            ),
+
+            const SizedBox(height: 30),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: loading ? null : onGoogle,
+                icon: Image.network(
+                  'https://cdn-icons-png.flaticon.com/512/2991/2991148.png',
+                  height: 20,
+                  // Graceful fallback when offline or image fails to load
+                  errorBuilder: (context, error, stackTrace) =>
+                      const Icon(Icons.account_circle, size: 20),
+                ),
+                label: const Text('Continue with Google'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+          ],
+        );
+      },
     );
   }
 }

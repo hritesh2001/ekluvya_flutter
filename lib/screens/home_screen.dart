@@ -1,42 +1,54 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../services/api_service.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
+
+  Future<void> _logout(BuildContext context) async {
+    await context.read<ApiService>().clearToken();
+    if (!context.mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Ekluvya"),
+        title: const Text('Ekluvya'),
         centerTitle: true,
         backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: () => _logout(context),
+          ),
+        ],
       ),
-
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              "Welcome to Ekluvya 🎉",
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+      body: const SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.check_circle_outline, size: 72, color: Colors.green),
+              SizedBox(height: 16),
+              Text(
+                'Welcome to Ekluvya!',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-
-            const SizedBox(height: 20),
-
-            ElevatedButton(
-              onPressed: () {
-                // logout (temporary)
-                Navigator.pushReplacementNamed(context, '/');
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
+              SizedBox(height: 8),
+              Text(
+                'You are successfully logged in.',
+                style: TextStyle(color: Colors.grey),
               ),
-              child: const Text("Logout"),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

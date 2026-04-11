@@ -1,7 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import '../services/api_service.dart';
+import 'package:provider/provider.dart';
+
 import '../viewmodels/registration_viewmodel.dart';
 
 class RegistrationScreen extends StatefulWidget {
@@ -12,139 +14,157 @@ class RegistrationScreen extends StatefulWidget {
 }
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
-  final ApiService apiService = ApiService();
-  final firstName = TextEditingController();
-  final lastName = TextEditingController();
-  final emailController = TextEditingController();
+  final _firstName = TextEditingController();
+  final _lastName = TextEditingController();
+  final _email = TextEditingController();
 
-  String? gender;
-  String? preparingFor;
-  DateTime? dob;
-  File? image;
+  String? _gender;
+  String? _preparingFor;
+  DateTime? _dob;
+  File? _image;
+  late String _phone;
 
-  bool loading = false;
-
-  late String phone;
-
-  final picker = ImagePicker();
+  final _picker = ImagePicker();
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-
-    phone = args?['phone'] ?? "";
+    _phone = args?['phone']?.toString() ?? '';
   }
 
-  Future pickImage() async {
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-
-    if (picked != null) {
-      setState(() {
-        image = File(picked.path);
-      });
-    }
+  @override
+  void dispose() {
+    _firstName.dispose();
+    _lastName.dispose();
+    _email.dispose();
+    super.dispose();
   }
 
-  String getPreparingForValue(String value) {
-    switch (value) {
-      case "IIT FOUNDATION":
-        return "IIT";
-      case "NEET FOUNDATION":
-        return "NEET";
-      case "INTEGRATED":
-        return "CBSE";
-      case "PRIMARY":
-        return "PRIMARY";
-      case "PRE-PRIMARY":
-        return "PREPRIMARY";
-      default:
-        return "CBSE";
-    }
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  String getGenderValue(String gender) {
-    if (gender == "Male") return "1";
-    if (gender == "Female") return "2";
-    return "1";
-  }
-
-  final regVM = RegistrationViewModel();
-
-  void register() async {
-    if (phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Phone missing. Please login again")),
+  Future<void> _pickImage() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
       );
-      return;
+      if (picked != null && mounted) {
+        setState(() => _image = File(picked.path));
+      }
+    } catch (_) {
+      _showSnack('Could not open gallery. Please try again.');
     }
+  }
 
-    if (firstName.text.isEmpty ||
-        lastName.text.isEmpty ||
-        emailController.text.isEmpty ||
-        gender == null ||
-        preparingFor == null ||
-        dob == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
-      return;
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(2005),
+      firstDate: DateTime(1990),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null && mounted) setState(() => _dob = picked);
+  }
+
+  String _genderValue(String g) => g == 'Female' ? '2' : '1';
+
+  String _preparingForValue(String v) {
+    const map = {
+      'IIT FOUNDATION': 'IIT',
+      'NEET FOUNDATION': 'NEET',
+      'INTEGRATED': 'CBSE',
+      'PRIMARY': 'PRIMARY',
+      'PRE-PRIMARY': 'PREPRIMARY',
+    };
+    return map[v] ?? 'CBSE';
+  }
+
+  bool _validate() {
+    if (_phone.isEmpty) {
+      _showSnack('Phone missing. Please login again');
+      return false;
     }
+    if (_firstName.text.trim().isEmpty ||
+        _lastName.text.trim().isEmpty ||
+        _email.text.trim().isEmpty) {
+      _showSnack('Please fill all fields');
+      return false;
+    }
+    if (_gender == null) {
+      _showSnack('Please select a gender');
+      return false;
+    }
+    if (_preparingFor == null) {
+      _showSnack('Please select what you are preparing for');
+      return false;
+    }
+    if (_dob == null) {
+      _showSnack('Please select your date of birth');
+      return false;
+    }
+    return true;
+  }
 
-    setState(() => loading = true);
+  Future<void> _register() async {
+    if (!_validate()) return;
 
-    final result = await regVM.register(
-      firstName: firstName.text,
-      lastName: lastName.text,
-      email: emailController.text,
-      phone: phone,
-      gender: getGenderValue(gender!),
-      preparingFor: getPreparingForValue(preparingFor!),
-      dob: dob!,
-      image: image,
+    final regVM = context.read<RegistrationViewModel>();
+    final success = await regVM.register(
+      firstName: _firstName.text.trim(),
+      lastName: _lastName.text.trim(),
+      email: _email.text.trim(),
+      phone: _phone,
+      gender: _genderValue(_gender!),
+      preparingFor: _preparingForValue(_preparingFor!),
+      dob: _dob!,
+      image: _image,
     );
 
     if (!mounted) return;
 
-    setState(() => loading = false);
-
-    if (result['success']) {
+    if (success) {
       Navigator.pushReplacementNamed(context, '/home');
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(result['message'])));
+      _showSnack(regVM.errorMessage ?? 'Registration failed');
     }
   }
+
+  // ── UI ────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: Colors.grey[200],
-
       body: SafeArea(
         child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 20),
           child: Column(
             children: [
-              const SizedBox(height: 20),
-
-              /// PROFILE IMAGE
+              // Profile picture
               Stack(
                 alignment: Alignment.bottomRight,
                 children: [
                   CircleAvatar(
                     radius: 70,
                     backgroundColor: Colors.grey[300],
-                    backgroundImage: image != null ? FileImage(image!) : null,
-                    child: image == null
+                    backgroundImage:
+                        _image != null ? FileImage(_image!) : null,
+                    child: _image == null
                         ? const Icon(Icons.person, size: 60)
                         : null,
                   ),
                   GestureDetector(
-                    onTap: pickImage,
+                    onTap: _pickImage,
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: const BoxDecoration(
@@ -153,7 +173,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           colors: [Colors.red, Colors.orange],
                         ),
                       ),
-                      child: const Icon(Icons.edit, color: Colors.white),
+                      child:
+                          const Icon(Icons.edit, color: Colors.white, size: 18),
                     ),
                   ),
                 ],
@@ -161,7 +182,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
               const SizedBox(height: 20),
 
-              /// CARD
+              // Form card
               Container(
                 padding: const EdgeInsets.all(20),
                 margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -176,7 +197,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                   children: [
                     const Center(
                       child: Text(
-                        "WHO’S LEARNING?",
+                        "WHO'S LEARNING?",
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 20,
@@ -187,105 +208,110 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
                     const SizedBox(height: 20),
 
-                    buildField("FIRST NAME", controller: firstName),
-                    buildField("LAST NAME", controller: lastName),
-                    buildField("EMAIL", controller: emailController),
+                    _buildField('FIRST NAME', controller: _firstName),
+                    _buildField('LAST NAME', controller: _lastName),
+                    _buildField(
+                      'EMAIL',
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                    ),
 
+                    // DOB + Gender row
                     Row(
                       children: [
                         Expanded(
                           child: GestureDetector(
-                            onTap: () async {
-                              final picked = await showDatePicker(
-                                context: context,
-                                firstDate: DateTime(1990),
-                                lastDate: DateTime.now(),
-                              );
-
-                              if (picked != null) {
-                                setState(() => dob = picked);
-                              }
-                            },
-                            child: buildField(
-                              dob == null
-                                  ? "DOB"
-                                  : "${dob!.day.toString().padLeft(2, '0')}/"
-                                        "${dob!.month.toString().padLeft(2, '0')}/"
-                                        "${dob!.year}",
+                            onTap: _pickDate,
+                            child: _buildField(
+                              _dob == null
+                                  ? 'DOB'
+                                  : '${_dob!.day.toString().padLeft(2, '0')}/'
+                                        '${_dob!.month.toString().padLeft(2, '0')}/'
+                                        '${_dob!.year}',
                               enabled: false,
                             ),
                           ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: buildDropdown(
-                            hint: "GENDER",
-                            value: gender,
-                            items: ["Male", "Female"],
-                            onChanged: (val) => setState(() => gender = val),
+                          child: _buildDropdown(
+                            hint: 'GENDER',
+                            value: _gender,
+                            items: const ['Male', 'Female'],
+                            onChanged: (v) => setState(() => _gender = v),
                           ),
                         ),
                       ],
                     ),
 
-                    const SizedBox(height: 10),
-
-                    buildDropdown(
-                      hint: "PREPARING FOR",
-                      value: preparingFor,
-                      items: [
-                        "IIT FOUNDATION",
-                        "NEET FOUNDATION",
-                        "INTEGRATED",
-                        "PRIMARY",
-                        "PRE-PRIMARY",
+                    _buildDropdown(
+                      hint: 'PREPARING FOR',
+                      value: _preparingFor,
+                      items: const [
+                        'IIT FOUNDATION',
+                        'NEET FOUNDATION',
+                        'INTEGRATED',
+                        'PRIMARY',
+                        'PRE-PRIMARY',
                       ],
-                      onChanged: (val) => setState(() => preparingFor = val),
+                      onChanged: (v) => setState(() => _preparingFor = v),
                     ),
 
                     const SizedBox(height: 20),
 
-                    /// BUTTONS
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: loading ? null : register,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                            ),
-                            child: loading
-                                ? const CircularProgressIndicator()
-                                : const Text(
-                                    "SAVE",
-                                    style: TextStyle(color: Colors.red),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              Navigator.pushReplacementNamed(context, '/');
-                            },
-                            child: const Text(
-                              "CANCEL",
-                              style: TextStyle(color: Colors.white),
+                    // Action buttons — rebuilds only on loading state change
+                    Consumer<RegistrationViewModel>(
+                      builder: (context, regVM, _) => Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: regVM.isLoading ? null : _register,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                disabledBackgroundColor: Colors.white70,
+                              ),
+                              child: regVM.isLoading
+                                  ? const SizedBox(
+                                      height: 18,
+                                      width: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.red,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'SAVE',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
                             ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextButton(
+                              onPressed: regVM.isLoading
+                                  ? null
+                                  : () => Navigator.pushReplacementNamed(
+                                        context,
+                                        '/login',
+                                      ),
+                              child: const Text(
+                                'CANCEL',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
 
                     const SizedBox(height: 10),
 
                     Center(
                       child: TextButton(
-                        onPressed: () {
-                          Navigator.pushReplacementNamed(context, '/home');
-                        },
+                        onPressed: () =>
+                            Navigator.pushReplacementNamed(context, '/home'),
                         child: const Text(
-                          "SKIP FOR NOW, I’LL DO IT LATER",
+                          "SKIP FOR NOW, I'LL DO IT LATER",
                           style: TextStyle(color: Colors.white),
                         ),
                       ),
@@ -293,6 +319,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                   ],
                 ),
               ),
+
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -300,22 +328,24 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     );
   }
 
-  Widget buildField(
+  // ── Reusable form widgets ─────────────────────────────────────────────────
+
+  Widget _buildField(
     String hint, {
     TextEditingController? controller,
     bool enabled = true,
+    TextInputType keyboardType = TextInputType.text,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: controller,
         enabled: enabled,
-        keyboardType: hint == "EMAIL"
-            ? TextInputType.emailAddress
-            : TextInputType.text,
+        keyboardType: keyboardType,
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+          hintStyle:
+              const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
           filled: true,
           fillColor: Colors.white,
           contentPadding: const EdgeInsets.symmetric(
@@ -331,11 +361,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     );
   }
 
-  Widget buildDropdown({
+  Widget _buildDropdown({
     required String hint,
     required String? value,
     required List<String> items,
-    required Function(String) onChanged,
+    required void Function(String) onChanged,
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -344,15 +374,21 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: DropdownButton<String>(
-        value: value,
-        hint: Text(hint),
-        isExpanded: true,
-        underline: const SizedBox(),
-        items: items
-            .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-            .toList(),
-        onChanged: (val) => onChanged(val!),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          hint: Text(
+            hint,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+          ),
+          isExpanded: true,
+          items: items
+              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+              .toList(),
+          onChanged: (val) {
+            if (val != null) onChanged(val);
+          },
+        ),
       ),
     );
   }

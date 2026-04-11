@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(printf 'import '\\\\''package:flutter/material.dart'\\\\'';\\\\n\\\\nabstract class AppHelpers {\\\\n  AppHelpers._\\(\\);\\\\n\\\\n  static void showSnack\\(BuildContext context, String message\\) {\\\\n    if \\(!context.mounted\\) return;\\\\n    ScaffoldMessenger.of\\(context\\)\\\\n      ..hideCurrentSnackBar\\(\\)\\\\n      ..showSnackBar\\(SnackBar\\(content: Text\\(message\\)\\)\\);\\\\n  }\\\\n\\\\n  static String formatDate\\(DateTime date\\) =>\\\\n      '\\\\''\\\\${date.day.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.month.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.year}'\\\\'';\\\\n}\\\\n')"
+    ]
+  }
+}
