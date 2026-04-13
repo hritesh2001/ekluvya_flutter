@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../services/api_service.dart';
 import '../viewmodels/registration_viewmodel.dart';
 
 class RegistrationScreen extends StatefulWidget {
@@ -112,6 +113,103 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       return false;
     }
     return true;
+  }
+
+  /// Shows the confirmation dialog when the user taps "Skip for now".
+  /// Yes → sign out + go to login screen.
+  /// No  → dismiss dialog, stay on registration.
+  Future<void> _confirmSkip() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Confirmation',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Your profile is Incomplete. If you quit,\nYou need to sign in again.',
+                style: TextStyle(color: Colors.black54, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  // ── No button ──────────────────────────────────────────
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        side: const BorderSide(color: Colors.grey),
+                      ),
+                      child: const Text(
+                        'No',
+                        style: TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // ── Yes button ─────────────────────────────────────────
+                  Expanded(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFE91E63), Color(0xFFFF9800)],
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: const Text(
+                          'Yes',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // User tapped Yes → sign out and go to login
+    if (confirmed == true && mounted) {
+      await context.read<ApiService>().clearToken();
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/login');
+    }
+    // User tapped No → do nothing, stays on registration page
   }
 
   Future<void> _register() async {
@@ -308,8 +406,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
                     Center(
                       child: TextButton(
-                        onPressed: () =>
-                            Navigator.pushReplacementNamed(context, '/home'),
+                        onPressed: _confirmSkip,
                         child: const Text(
                           "SKIP FOR NOW, I'LL DO IT LATER",
                           style: TextStyle(color: Colors.white),

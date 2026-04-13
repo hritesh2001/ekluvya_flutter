@@ -1,10 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../services/api_service.dart';
-
-/// Checks for an existing auth token and routes the user accordingly.
-/// Users with a valid saved token skip the login flow entirely.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -12,34 +7,47 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fadeAnim;
+
   @override
   void initState() {
     super.initState();
-    Future.microtask(_initApp);
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
+    _controller.forward();
+    _navigate();
   }
 
-  Future<void> _initApp() async {
-    // Minimum splash duration so the logo is visible
-    await Future.delayed(const Duration(seconds: 2));
+  Future<void> _navigate() async {
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
     if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/home');
+  }
 
-    final token = await context.read<ApiService>().getToken();
-    if (!mounted) return;
-
-    if (token != null && token.isNotEmpty) {
-      Navigator.pushReplacementNamed(context, '/home');
-    } else {
-      Navigator.pushReplacementNamed(context, '/login');
-    }
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Center(
-        child: Image.asset('assets/icons/logo.png', width: 150),
+      body: FadeTransition(
+        opacity: _fadeAnim,
+        child: Center(
+          child: Image.asset(
+            'assets/icons/logo.png',
+            width: 180,
+          ),
+        ),
       ),
     );
   }

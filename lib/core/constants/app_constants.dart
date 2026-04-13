@@ -8,6 +8,13 @@ abstract class AppConstants {
   static const String mediaBaseUrl =
       'https://stg-ottapi.ekluvya.guru/mediaview/api/v1';
 
+  /// CloudFront CDN base URL for all media assets.
+  /// Final URL = bannerImageBaseUrl + bannerImg field from API.
+  /// e.g. base + "banner-images/xyz.png"
+  ///   → https://d38zvxejdrf8bt.cloudfront.net/banner-images/xyz.png
+  static const String bannerImageBaseUrl =
+      'https://d38zvxejdrf8bt.cloudfront.net/';
+
   /// Global timeout for every HTTP request.
   static const Duration apiTimeout = Duration(seconds: 15);
 

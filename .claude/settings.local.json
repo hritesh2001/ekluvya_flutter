@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(printf 'import '\\\\''package:flutter/material.dart'\\\\'';\\\\n\\\\nabstract class AppHelpers {\\\\n  AppHelpers._\\(\\);\\\\n\\\\n  static void showSnack\\(BuildContext context, String message\\) {\\\\n    if \\(!context.mounted\\) return;\\\\n    ScaffoldMessenger.of\\(context\\)\\\\n      ..hideCurrentSnackBar\\(\\)\\\\n      ..showSnackBar\\(SnackBar\\(content: Text\\(message\\)\\)\\);\\\\n  }\\\\n\\\\n  static String formatDate\\(DateTime date\\) =>\\\\n      '\\\\''\\\\${date.day.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.month.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.year}'\\\\'';\\\\n}\\\\n')"
+      "Bash(printf 'import '\\\\''package:flutter/material.dart'\\\\'';\\\\n\\\\nabstract class AppHelpers {\\\\n  AppHelpers._\\(\\);\\\\n\\\\n  static void showSnack\\(BuildContext context, String message\\) {\\\\n    if \\(!context.mounted\\) return;\\\\n    ScaffoldMessenger.of\\(context\\)\\\\n      ..hideCurrentSnackBar\\(\\)\\\\n      ..showSnackBar\\(SnackBar\\(content: Text\\(message\\)\\)\\);\\\\n  }\\\\n\\\\n  static String formatDate\\(DateTime date\\) =>\\\\n      '\\\\''\\\\${date.day.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.month.toString\\(\\).padLeft\\(2, '\\\\''0'\\\\''\\)}/'\\\\''  \\\\n      '\\\\''\\\\${date.year}'\\\\'';\\\\n}\\\\n')",
+      "Bash(xargs grep:*)",
+      "Bash(curl -s \"https://stg-ottapi.ekluvya.guru/mediaview/api/v1/home/gethome-data?limit=5&inside_limit=2\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(flutter pub:*)"
     ]
   }
 }

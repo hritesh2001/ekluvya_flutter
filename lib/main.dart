@@ -4,6 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/utils/logger.dart';
+import 'features/banner/data/remote/banner_api_service.dart';
+import 'features/banner/data/repository/banner_repository_impl.dart';
+import 'features/banner/domain/repositories/banner_repository.dart';
+import 'features/banner/presentation/viewmodel/banner_viewmodel.dart';
+import 'features/course/data/remote/course_api_service.dart';
+import 'features/course/data/repository/course_repository_impl.dart';
+import 'features/course/domain/repositories/course_repository.dart';
+import 'features/course/presentation/viewmodel/course_viewmodel.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/otp_screen.dart';
@@ -60,6 +68,38 @@ class _AppProviders extends StatelessWidget {
         ChangeNotifierProxyProvider<ApiService, RegistrationViewModel>(
           create: (ctx) => RegistrationViewModel(ctx.read<ApiService>()),
           update: (_, api, previous) => previous ?? RegistrationViewModel(api),
+        ),
+
+        // ── Banner module ────────────────────────────────────────────────
+        Provider<BannerApiService>(create: (_) => BannerApiService()),
+
+        ProxyProvider<BannerApiService, BannerRepository>(
+          create: (ctx) => BannerRepositoryImpl(
+            apiService: ctx.read<BannerApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? BannerRepositoryImpl(apiService: api),
+        ),
+
+        ChangeNotifierProxyProvider<BannerRepository, BannerViewModel>(
+          create: (ctx) => BannerViewModel(ctx.read<BannerRepository>()),
+          update: (_, repo, previous) => previous ?? BannerViewModel(repo),
+        ),
+
+        // ── Course module ────────────────────────────────────────────────
+        Provider<CourseApiService>(create: (_) => CourseApiService()),
+
+        ProxyProvider<CourseApiService, CourseRepository>(
+          create: (ctx) => CourseRepositoryImpl(
+            apiService: ctx.read<CourseApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? CourseRepositoryImpl(apiService: api),
+        ),
+
+        ChangeNotifierProxyProvider<CourseRepository, CourseViewModel>(
+          create: (ctx) => CourseViewModel(ctx.read<CourseRepository>()),
+          update: (_, repo, previous) => previous ?? CourseViewModel(repo),
         ),
       ],
       child: const MyApp(),
