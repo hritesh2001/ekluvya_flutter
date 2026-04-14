@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/theme/app_theme.dart';
 import 'core/utils/logger.dart';
 import 'features/banner/data/remote/banner_api_service.dart';
 import 'features/banner/data/repository/banner_repository_impl.dart';
 import 'features/banner/domain/repositories/banner_repository.dart';
 import 'features/banner/presentation/viewmodel/banner_viewmodel.dart';
+import 'features/class_subject/data/remote/class_subject_api_service.dart';
+import 'features/class_subject/data/repository/class_subject_repository_impl.dart';
+import 'features/class_subject/domain/repositories/class_subject_repository.dart';
 import 'features/course/data/remote/course_api_service.dart';
 import 'features/course/data/repository/course_repository_impl.dart';
 import 'features/course/domain/repositories/course_repository.dart';
@@ -101,6 +105,22 @@ class _AppProviders extends StatelessWidget {
           create: (ctx) => CourseViewModel(ctx.read<CourseRepository>()),
           update: (_, repo, previous) => previous ?? CourseViewModel(repo),
         ),
+
+        // ── Class + Subject module ───────────────────────────────────────
+        // ClassSubjectRepository is registered globally so every
+        // CourseDetailScreen can read it via context.read<ClassSubjectRepository>()
+        // and the in-memory cache is shared across screen visits.
+        Provider<ClassSubjectApiService>(
+          create: (_) => ClassSubjectApiService(),
+        ),
+
+        ProxyProvider<ClassSubjectApiService, ClassSubjectRepository>(
+          create: (ctx) => ClassSubjectRepositoryImpl(
+            apiService: ctx.read<ClassSubjectApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? ClassSubjectRepositoryImpl(apiService: api),
+        ),
       ],
       child: const MyApp(),
     );
@@ -115,10 +135,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Ekluvya',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFE91E63)),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.system,
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),

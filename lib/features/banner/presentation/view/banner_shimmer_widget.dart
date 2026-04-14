@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../core/theme/app_theme.dart';
+
 /// Animated shimmer placeholder shown while banner images are loading.
 ///
-/// Built entirely with Flutter core — no external shimmer package needed.
-/// Uses a [LinearGradient] whose offset is driven by an [AnimationController]
-/// to produce the characteristic left-to-right sweep.
+/// Accepts an optional [height] so the caller can match the responsive
+/// banner height exactly. Defaults to 180 if not supplied.
 class BannerShimmerWidget extends StatefulWidget {
-  const BannerShimmerWidget({super.key});
+  const BannerShimmerWidget({super.key, this.height = 180});
+
+  final double height;
 
   @override
   State<BannerShimmerWidget> createState() => _BannerShimmerWidgetState();
@@ -38,29 +41,35 @@ class _BannerShimmerWidgetState extends State<BannerShimmerWidget>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, _) {
-        return Container(
-          width: double.infinity,
-          height: 180,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            gradient: LinearGradient(
-              begin: Alignment(_animation.value - 1, 0),
-              end: Alignment(_animation.value, 0),
-              colors: const [
-                Color(0xFFE0E0E0),
-                Color(0xFFF5F5F5),
-                Color(0xFFEEEEEE),
-                Color(0xFFF5F5F5),
-                Color(0xFFE0E0E0),
-              ],
-              stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
+    final colors = Theme.of(context).extension<AppColors>() ?? AppColors.light;
+
+    // RepaintBoundary isolates the 60 fps animation repaint from the parent
+    // widget tree so static ancestors are never unnecessarily dirtied.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _animation,
+        builder: (context, _) {
+          return Container(
+            width: double.infinity,
+            height: widget.height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: LinearGradient(
+                begin: Alignment(_animation.value - 1, 0),
+                end: Alignment(_animation.value, 0),
+                colors: [
+                  colors.shimmerBase,
+                  colors.shimmerHighlight,
+                  colors.shimmerBase.withValues(alpha: 0.85),
+                  colors.shimmerHighlight,
+                  colors.shimmerBase,
+                ],
+                stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

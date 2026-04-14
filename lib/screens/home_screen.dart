@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../core/theme/app_theme.dart';
 import '../features/banner/presentation/view/banner_carousel_widget.dart';
 import '../features/course/presentation/view/course_section_widget.dart';
 import '../features/course/presentation/view/course_shimmer_widget.dart';
 import '../features/course/presentation/viewmodel/course_viewmodel.dart';
 
+/// Landing screen.
+///
+/// Constraints:
+///   - No AppBar, no navigation bar, no icons in the header.
+///   - Screen starts directly with the banner.
+///   - [AnnotatedRegion] controls status-bar icon brightness without an AppBar.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -23,62 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-      ),
-    );
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: const Color(0xFFE91E63),
-          onRefresh: () => context.read<CourseViewModel>().loadCategories(),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Banner Carousel ───────────────────────────────────
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
-                  child: BannerCarouselWidget(),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ── Course Categories ─────────────────────────────────
-                Consumer<CourseViewModel>(
-                  builder: (context, vm, _) {
-                    if (vm.isLoading) return _buildShimmer();
-                    if (vm.hasError) return _buildError(vm);
-                    if (vm.isEmpty) return _buildEmpty();
-                    if (vm.hasData) {
-                      return Column(
-                        children: [
-                          for (final category in vm.categories) ...[
-                            CourseSectionWidget(category: category),
-                            const SizedBox(height: 20),
-                          ],
-                        ],
-                      );
-                    }
-                    return _buildShimmer();
-                  },
-                ),
-
-                const SizedBox(height: 12),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  // ── Content states ────────────────────────────────────────────────────────
 
   Widget _buildShimmer() {
     return Column(
@@ -92,30 +44,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildError(CourseViewModel vm) {
+  Widget _buildError(CourseViewModel vm, AppColors colors) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       child: Center(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.wifi_off_rounded,
-                size: 48, color: Colors.redAccent),
+            Icon(Icons.wifi_off_rounded, size: 48, color: colors.brand),
             const SizedBox(height: 12),
             Text(
               vm.errorMessage ?? 'Failed to load courses',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: Colors.black54),
+              style: TextStyle(fontSize: 14, color: colors.metaText),
             ),
             const SizedBox(height: 16),
-            ElevatedButton.icon(
+            FilledButton.icon(
               onPressed: vm.retry,
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFE91E63),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.brand,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ],
@@ -124,12 +77,78 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildEmpty() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 48),
+  Widget _buildEmpty(AppColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
       child: Center(
-        child: Text('No courses available',
-            style: TextStyle(color: Colors.grey, fontSize: 14)),
+        child: Text(
+          'No courses available',
+          style: TextStyle(color: colors.metaText, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AppColors>() ?? AppColors.light;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // AnnotatedRegion is the correct way to control the status-bar style
+    // when there is no AppBar to carry a SystemUiOverlayStyle.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+          .copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        // No AppBar — screen starts directly with the banner.
+        body: SafeArea(
+          child: RefreshIndicator(
+            color: colors.brand,
+            onRefresh: () async {
+              await context.read<CourseViewModel>().loadCategories();
+            },
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                // ── Banner Carousel ───────────────────────────────────
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
+                    child: BannerCarouselWidget(),
+                  ),
+                ),
+
+                const SliverToBoxAdapter(child: SizedBox(height: 20)),
+
+                // ── Course Categories ─────────────────────────────────
+                SliverToBoxAdapter(
+                  child: Consumer<CourseViewModel>(
+                    builder: (context, vm, _) {
+                      if (vm.isLoading) return _buildShimmer();
+                      if (vm.hasError) return _buildError(vm, colors);
+                      if (vm.isEmpty) return _buildEmpty(colors);
+                      if (vm.hasData) {
+                        return Column(
+                          children: [
+                            for (final category in vm.categories) ...[
+                              CourseSectionWidget(category: category),
+                              const SizedBox(height: 20),
+                            ],
+                          ],
+                        );
+                      }
+                      return _buildShimmer();
+                    },
+                  ),
+                ),
+
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

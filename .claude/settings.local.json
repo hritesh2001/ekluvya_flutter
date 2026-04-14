@@ -5,7 +5,8 @@
       "Bash(xargs grep:*)",
       "Bash(curl -s \"https://stg-ottapi.ekluvya.guru/mediaview/api/v1/home/gethome-data?limit=5&inside_limit=2\")",
       "Bash(python3 -m json.tool)",
-      "Bash(flutter pub:*)"
+      "Bash(flutter pub:*)",
+      "Bash(flutter analyze:*)"
     ]
   }
 }

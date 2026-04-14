@@ -1,17 +1,23 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../../core/theme/app_theme.dart';
+import '../../../../../core/utils/logger.dart';
 import '../../data/models/banner_model.dart';
 import '../viewmodel/banner_viewmodel.dart';
 import 'banner_shimmer_widget.dart';
 
-/// Full-width banner carousel with auto-scroll, indicators, shimmer loading,
-/// error state with a Retry button, and empty state handling.
+/// Full-width banner image carousel.
 ///
-/// Consumed via [Consumer<BannerViewModel>] — make sure [BannerViewModel]
-/// is registered above this widget in the Provider tree.
+/// - Shows [BannerModel.bannerImg] as a full-bleed [CachedNetworkImage].
+/// - No text, no labels, no overlays — pure image only.
+/// - Auto-scrolls every 5 s; pauses while the user drags.
+/// - Rounded corners (16 px radius).
+/// - Page indicator dots below.
+/// - Height: 38 % of screen width, clamped to [130, 200] dp.
 class BannerCarouselWidget extends StatefulWidget {
   const BannerCarouselWidget({super.key});
 
@@ -24,29 +30,64 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
   Timer? _autoScrollTimer;
   int _currentPage = 0;
 
-  /// How long each banner stays visible before sliding to the next.
-  static const _autoScrollInterval = Duration(seconds: 3);
+  static const _autoScrollInterval = Duration(seconds: 5);
+  static const _slideDuration = Duration(milliseconds: 450);
 
-  /// Slide animation duration.
-  static const _slideDuration = Duration(milliseconds: 400);
+  // ── Responsive height ─────────────────────────────────────────────────────
+
+  double _bannerHeight(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    // Smaller height so the full image is visible without cropping.
+    // 0.28 × screen width ≈ 100 dp on small phones, 140 dp on large phones.
+    return (width * 0.28).clamp(100.0, 150.0);
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
-    // Delay until the first frame so context.read is safe
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<BannerViewModel>().loadBanners();
+      if (!mounted) return;
+      final vm = context.read<BannerViewModel>();
+      // Listen for the first loaded state to kick off auto-scroll exactly once.
+      vm.addListener(_onBannerVmChange);
+      vm.loadBanners();
     });
   }
 
-  // ── Auto-scroll ────────────────────────────────────────────────────────
+  void _onBannerVmChange() {
+    final vm = context.read<BannerViewModel>();
+    if (vm.hasData) {
+      // Banners just arrived — start auto-scroll (guarded against double-start).
+      _startAutoScroll(vm.banners.length);
+    } else {
+      // Error / loading / empty — stop any running timer.
+      _stopAutoScroll();
+    }
+  }
+
+  @override
+  void dispose() {
+    // Remove the ViewModel listener to prevent callbacks after disposal.
+    context.read<BannerViewModel>().removeListener(_onBannerVmChange);
+    _autoScrollTimer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  // ── Auto-scroll ───────────────────────────────────────────────────────────
 
   void _startAutoScroll(int count) {
+    // Guard: don't cancel and recreate a perfectly healthy running timer.
+    // Without this, every Consumer rebuild (e.g. on refresh) called
+    // addPostFrameCallback → _startAutoScroll, nuking the timer and causing
+    // a visible stutter / page-position reset mid-scroll.
+    if (_autoScrollTimer?.isActive ?? false) return;
     _autoScrollTimer?.cancel();
-    if (count <= 1) return; // no point scrolling a single banner
-
+    if (count <= 1) return;
     _autoScrollTimer = Timer.periodic(_autoScrollInterval, (_) {
-      if (!_pageController.hasClients) return;
+      if (!mounted || !_pageController.hasClients) return;
       final next = (_currentPage + 1) % count;
       _pageController.animateToPage(
         next,
@@ -56,54 +97,50 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
     });
   }
 
-  void _stopAutoScroll() => _autoScrollTimer?.cancel();
-
-  @override
-  void dispose() {
+  void _stopAutoScroll() {
     _autoScrollTimer?.cancel();
-    _pageController.dispose();
-    super.dispose();
+    // Null out so the isActive guard in _startAutoScroll lets the
+    // next call restart correctly after a user drag.
+    _autoScrollTimer = null;
   }
 
-  // ── State widgets ──────────────────────────────────────────────────────
+  // ── Fallback states ───────────────────────────────────────────────────────
 
-  Widget _buildShimmer() => const BannerShimmerWidget();
-
-  Widget _buildError(String? message, VoidCallback onRetry) {
+  Widget _buildError(
+      String? message, VoidCallback onRetry, AppColors colors, double height) {
     return Container(
-      height: 180,
+      height: height,
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF3F3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+        color: colors.errorSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.brand.withValues(alpha: 0.25)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.wifi_off_rounded, size: 40, color: Colors.redAccent),
+          Icon(Icons.wifi_off_rounded, size: 36, color: colors.brand),
           const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
               message ?? 'Failed to load banners',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: Colors.black54),
+              style: TextStyle(fontSize: 13, color: colors.metaText),
             ),
           ),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
+          const SizedBox(height: 10),
+          FilledButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh, size: 16),
             label: const Text('Retry'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.brand,
               foregroundColor: Colors.white,
               padding:
                   const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               textStyle: const TextStyle(fontSize: 13),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+                  borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ],
@@ -111,145 +148,139 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
     );
   }
 
-  Widget _buildEmpty() {
+  Widget _buildEmpty(AppColors colors, double height) {
     return Container(
-      height: 180,
+      height: height,
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
+        color: colors.imagePlaceholder,
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: const Center(
+      child: Center(
         child: Text(
           'No banners available',
-          style: TextStyle(color: Colors.grey, fontSize: 14),
+          style: TextStyle(color: colors.metaText, fontSize: 14),
         ),
       ),
     );
   }
 
-  // ── Banner page ────────────────────────────────────────────────────────
+  Widget _imageFallback(AppColors colors, double height) {
+    return Container(
+      height: height,
+      color: colors.imagePlaceholder,
+      child: Center(
+        child: Icon(
+          Icons.broken_image_outlined,
+          size: 40,
+          color: colors.metaText,
+        ),
+      ),
+    );
+  }
 
-  Widget _buildBannerPage(BannerModel banner) {
+  // ── Single banner page — full-width image, no text ────────────────────────
+
+  Widget _buildBannerPage(BannerModel banner, double height, AppColors colors) {
     return GestureDetector(
       onTap: () {
         // TODO: wire deep-link navigation when the course/video module is ready
-        // if (banner.hasLink) { Navigator.pushNamed(context, '/course', arguments: banner.bannerUrl); }
       },
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          banner.fullImageUrl,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          height: height,
           width: double.infinity,
-          fit: BoxFit.fill,
-          // Show shimmer while the individual image downloads
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return const BannerShimmerWidget();
-          },
-          // Show the attempted URL so we can verify it is correct
-          errorBuilder: (context, error, stackTrace) {
-            debugPrint('BannerImage FAILED → ${banner.fullImageUrl} | $error');
-            return Container(
-              color: Colors.grey.shade200,
-              padding: const EdgeInsets.all(8),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.broken_image_outlined,
-                        size: 32, color: Colors.grey),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      banner.fullImageUrl,
-                      style: const TextStyle(
-                          fontSize: 9, color: Colors.blueGrey),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+          // Full image — no overlay, no text, no gradient on top.
+          child: banner.bannerImg.isNotEmpty
+              ? CachedNetworkImage(
+                  imageUrl: banner.fullImageUrl,
+                  // BoxFit.contain → entire image visible, no cropping.
+                  // BoxFit.cover would always crop to fill the fixed height.
+                  fit: BoxFit.contain,
+                  placeholder: (_, url) => BannerShimmerWidget(height: height),
+                  errorWidget: (_, url, err) {
+                    AppLogger.warning(
+                        'BannerCarousel', 'Image failed → ${banner.fullImageUrl}');
+                    return _imageFallback(colors, height);
+                  },
+                )
+              : _imageFallback(colors, height),
         ),
       ),
     );
   }
 
-  // ── Indicator dots ─────────────────────────────────────────────────────
+  // ── Indicator dots ────────────────────────────────────────────────────────
 
-  Widget _buildIndicators(int count) {
+  Widget _buildIndicators(int count, AppColors colors) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: List.generate(count, (index) {
         final isActive = index == _currentPage;
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOut,
           margin: const EdgeInsets.symmetric(horizontal: 3),
-          width: isActive ? 20 : 7,
-          height: 7,
+          width: isActive ? 20 : 6,
+          height: 6,
           decoration: BoxDecoration(
             color: isActive
-                ? const Color(0xFFE91E63)
-                : Colors.grey.shade300,
-            borderRadius: BorderRadius.circular(4),
+                ? colors.brand
+                : colors.metaText.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(3),
           ),
         );
       }),
     );
   }
 
-  // ── Carousel ───────────────────────────────────────────────────────────
+  // ── Carousel ──────────────────────────────────────────────────────────────
 
-  Widget _buildCarousel(List<BannerModel> banners) {
-    // Kick off auto-scroll after the carousel renders
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _startAutoScroll(banners.length);
-    });
-
+  Widget _buildCarousel(
+      List<BannerModel> banners, double height, AppColors colors) {
     return Column(
       children: [
         SizedBox(
-          height: 180,
+          height: height,
           child: NotificationListener<ScrollNotification>(
-            onNotification: (notification) {
-              // Pause while user is actively dragging
-              if (notification is ScrollStartNotification) _stopAutoScroll();
-              // Resume once they let go
-              if (notification is ScrollEndNotification) {
-                _startAutoScroll(banners.length);
-              }
+            onNotification: (n) {
+              if (n is ScrollStartNotification) _stopAutoScroll();
+              if (n is ScrollEndNotification) _startAutoScroll(banners.length);
               return false;
             },
             child: PageView.builder(
               controller: _pageController,
               itemCount: banners.length,
-              onPageChanged: (index) =>
-                  setState(() => _currentPage = index),
-              itemBuilder: (context, index) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: _buildBannerPage(banners[index]),
-              ),
+              onPageChanged: (i) => setState(() => _currentPage = i),
+              itemBuilder: (context, index) =>
+                  _buildBannerPage(banners[index], height, colors),
             ),
           ),
         ),
-        const SizedBox(height: 10),
-        _buildIndicators(banners.length),
+        if (banners.length > 1) ...[
+          const SizedBox(height: 10),
+          _buildIndicators(banners.length, colors),
+        ],
       ],
     );
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────
+  // ── Root build ────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AppColors>() ?? AppColors.light;
+    final height = _bannerHeight(context);
+
     return Consumer<BannerViewModel>(
       builder: (context, vm, _) {
-        if (vm.isLoading) return _buildShimmer();
-        if (vm.hasError) return _buildError(vm.errorMessage, vm.retry);
-        if (vm.isEmpty) return _buildEmpty();
-        if (vm.hasData) return _buildCarousel(vm.banners);
-        // BannerState.initial — also show shimmer until first load
-        return _buildShimmer();
+        if (vm.isLoading) return BannerShimmerWidget(height: height);
+        if (vm.hasError) {
+          return _buildError(vm.errorMessage, vm.retry, colors, height);
+        }
+        if (vm.isEmpty) return _buildEmpty(colors, height);
+        if (vm.hasData) return _buildCarousel(vm.banners, height, colors);
+        return BannerShimmerWidget(height: height);
       },
     );
   }
