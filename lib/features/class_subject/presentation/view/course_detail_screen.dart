@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../features/channel/data/models/channel_model.dart';
+import '../../../../features/channel/domain/repositories/channel_repository.dart';
+import '../../../../features/channel/presentation/viewmodel/channel_viewmodel.dart';
 import '../../domain/repositories/class_subject_repository.dart';
 import '../viewmodel/class_subject_viewmodel.dart';
 import 'chapter_filter_widget.dart';
@@ -13,9 +16,6 @@ import 'subject_chips_widget.dart';
 //   Deep orange (#FF5722) on the left → brand pink (#E91E63) on the right.
 const Color _gradOrange = Color(0xFFFF5722);
 const Color _gradPink   = Color(0xFFE91E63);
-
-// ── Below-gradient surface (light, as in the design) ─────────────────────────
-const Color _surfaceWhite = Color(0xFFF8F8F8);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -43,12 +43,23 @@ class CourseDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (ctx) => ClassSubjectViewModel(
-        repository: ctx.read<ClassSubjectRepository>(),
-        courseId: courseId,
-        courseTitle: courseTitle,
-      )..initialize(),
+    // Both ViewModels are scoped to this screen.
+    // ChannelViewModel shares the global ChannelRepository (cached).
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (ctx) => ClassSubjectViewModel(
+            repository: ctx.read<ClassSubjectRepository>(),
+            courseId: courseId,
+            courseTitle: courseTitle,
+          )..initialize(),
+        ),
+        ChangeNotifierProvider(
+          create: (ctx) => ChannelViewModel(
+            repository: ctx.read<ChannelRepository>(),
+          ),
+        ),
+      ],
       child: _CourseDetailBody(courseTitle: courseTitle),
     );
   }
@@ -68,7 +79,7 @@ class _CourseDetailBody extends StatelessWidget {
       value: SystemUiOverlayStyle.light
           .copyWith(statusBarColor: Colors.transparent),
       child: Scaffold(
-        backgroundColor: _surfaceWhite,
+        backgroundColor: Colors.white,
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -78,7 +89,7 @@ class _CourseDetailBody extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.centerLeft,
                   end: Alignment.centerRight,
-                  colors: [_gradOrange, _gradPink],
+                  colors: [_gradPink, _gradOrange],
                 ),
               ),
               child: Column(
@@ -237,140 +248,283 @@ class _ChapterFilterRow extends StatelessWidget {
   }
 }
 
-// ── Content scroll view ───────────────────────────────────────────────────────
+// ── Channel colour palette — cycled by index ──────────────────────────────────
 
-class _ContentScrollView extends StatelessWidget {
+const List<Color> _channelColors = [
+  Color(0xFFE91E63), // brand pink
+  Color(0xFF7C3AED), // purple
+  Color(0xFF0EA5E9), // sky blue
+  Color(0xFF16A34A), // green
+  Color(0xFFF97316), // orange
+  Color(0xFF0891B2), // cyan
+];
+
+Color _colorForIndex(int i) => _channelColors[i % _channelColors.length];
+
+// ── Content scroll view — real API data ───────────────────────────────────────
+
+/// Stateful so it can track the last-loaded filter params and trigger
+/// [ChannelViewModel.load] when the subject or class selection changes —
+/// without calling setState/notifyListeners during a build frame.
+class _ContentScrollView extends StatefulWidget {
   const _ContentScrollView();
 
-  static List<ContentSectionData> _buildMockSections(String? chapterName) {
-    final suffix =
-        chapterName != null && chapterName.isNotEmpty ? ' · $chapterName' : '';
-    return [
-      ContentSectionData(
-        id: 'ekluvya',
-        sourceName: 'Ekluvya',
-        sourceColor: const Color(0xFFE91E63),
-        videoCount: 14,
-        rating: 3.9,
-        items: [
-          ContentItemData(
-            id: 'e1',
-            title: 'IIT Class 7 Mathematics Chapter 1$suffix',
-            videosLabel: '6 VIDEOS',
-            rating: 4.5,
-          ),
-          ContentItemData(
-            id: 'e2',
-            title: 'IIT IIM COURSE$suffix',
-            videosLabel: '4 VIDEOS',
-            rating: 4.3,
-          ),
-          ContentItemData(
-            id: 'e3',
-            title: 'test$suffix',
-            videosLabel: '4 VIDEOS',
-          ),
-        ],
-      ),
-      ContentSectionData(
-        id: 'tutorials1',
-        sourceName: 'Tutorials',
-        sourceColor: const Color(0xFF7C3AED),
-        videoCount: 4,
-        rating: 4.4,
-        items: [
-          ContentItemData(
-            id: 't1',
-            title: 'Tutoria: Sample Test$suffix',
-            videosLabel: '1 VIDEO',
-          ),
-          ContentItemData(
-            id: 't2',
-            title: 'The Railway Man — Official Trailer — Streaming Now$suffix',
-            videosLabel: '1 VIDEO',
-            rating: 4.1,
-          ),
-          ContentItemData(
-            id: 't3',
-            title: 'The Bala-Rite$suffix',
-            videosLabel: '2 VIDEOS',
-          ),
-        ],
-      ),
-      ContentSectionData(
-        id: 'tutorials2',
-        sourceName: 'Tutorials',
-        sourceColor: const Color(0xFF0EA5E9),
-        videoCount: 15,
-        rating: 4.2,
-        items: [
-          ContentItemData(
-            id: 't4',
-            title: '3D Geometry Full Course$suffix',
-            videosLabel: '5 VIDEOS',
-            rating: 4.4,
-          ),
-          ContentItemData(
-            id: 't5',
-            title: 'tu· Course Essentials$suffix',
-            videosLabel: '5 VIDEOS',
-            rating: 4.0,
-          ),
-          ContentItemData(
-            id: 't6',
-            title: 'Advanced Problem Set$suffix',
-            videosLabel: '5 VIDEOS',
-          ),
-        ],
-      ),
-    ];
+  @override
+  State<_ContentScrollView> createState() => _ContentScrollViewState();
+}
+
+class _ContentScrollViewState extends State<_ContentScrollView> {
+  // Tracks the last params passed to ChannelViewModel.load() to avoid
+  // redundant calls when unrelated parts of ClassSubjectViewModel notify.
+  String? _loadedClassId;
+  String? _loadedSubjectId;
+  String? _loadedChapterId;
+
+  /// Converts a [ChannelModel] → [ContentSectionData] for the existing widget.
+  ContentSectionData _toSection(ChannelModel ch, int index) {
+    final items = ch.videos.map((v) {
+      final label = v.durationSeconds > 0 ? v.formattedDuration : null;
+      return ContentItemData(
+        id: v.id,
+        title: v.title,
+        thumbnailUrl: v.thumbnailUrl,
+        videosLabel: label,
+      );
+    }).toList();
+
+    return ContentSectionData(
+      id: ch.id,
+      sourceName: ch.title,
+      sourceColor: _colorForIndex(index),
+      videoCount: ch.totalVideos,
+      items: items,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Selector<ClassSubjectViewModel, (String?, String?)>(
-      selector: (_, vm) => (vm.classesError, vm.selectedChapter),
-      builder: (context, data, _) {
-        final (classesErr, selectedChapter) = data;
-
-        if (classesErr != null &&
-            context.read<ClassSubjectViewModel>().selectedClass == null) {
+    return Consumer2<ClassSubjectViewModel, ChannelViewModel>(
+      builder: (ctx, csVM, channelVM, _) {
+        // ── Show class-level error when no class loaded yet ──────────────
+        if (csVM.classesHasError && csVM.selectedClass == null) {
           return _ErrorState(
-            message: classesErr,
-            onRetry: context.read<ClassSubjectViewModel>().retryClasses,
+            message: csVM.classesError ?? 'Could not load classes.',
+            onRetry: csVM.retryClasses,
           );
         }
 
-        final sections = _buildMockSections(selectedChapter);
+        // ── Trigger channel load when class + subject are ready ──────────
+        // Load immediately even without a chapterId so content is visible.
+        // When chapters load later and auto-select the first one, chapterId
+        // changes → we re-load with the proper ID → correct filtered data.
+        final classId = csVM.selectedClass?.id;
+        final subjectId = csVM.selectedSubject?.id;
+        final chapterId = csVM.selectedChapter?.id ?? '';
 
-        return CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            const SliverToBoxAdapter(child: SizedBox(height: 12)),
-            for (int i = 0; i < sections.length; i++) ...[
-              SliverToBoxAdapter(
-                child: ContentSectionWidget(
-                  section: sections[i],
-                  onViewAll: () {},
-                ),
-              ),
-              if (i < sections.length - 1)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    child: Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: Colors.grey.withValues(alpha: 0.15),
-                    ),
-                  ),
-                ),
-            ],
-            const SliverToBoxAdapter(child: SizedBox(height: 32)),
-          ],
-        );
+        if (classId != null && subjectId != null) {
+          final paramsChanged = classId != _loadedClassId ||
+              subjectId != _loadedSubjectId ||
+              chapterId != (_loadedChapterId ?? '');
+          if (paramsChanged) {
+            _loadedClassId = classId;
+            _loadedSubjectId = subjectId;
+            _loadedChapterId = chapterId;
+            // Post-frame to avoid mutating state during build.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              channelVM.load(
+                courseId: csVM.courseId,
+                classId: classId,
+                subjectId: subjectId,
+                chapterId: chapterId,
+              );
+            });
+          }
+        }
+
+        // ── Channel load states ──────────────────────────────────────────
+        return switch (channelVM.state) {
+          ChannelLoadState.initial ||
+          ChannelLoadState.loading => const _ContentShimmer(),
+
+          ChannelLoadState.error => _ErrorState(
+              message: channelVM.error ?? 'Could not load content.',
+              onRetry: channelVM.retry,
+            ),
+
+          ChannelLoadState.loaded when channelVM.channels.isEmpty =>
+            const _EmptyContent(),
+
+          ChannelLoadState.loaded => _ChannelList(
+              channels: channelVM.channels,
+              toSection: _toSection,
+            ),
+        };
       },
+    );
+  }
+}
+
+// ── Channel list (real data) ──────────────────────────────────────────────────
+
+class _ChannelList extends StatelessWidget {
+  const _ChannelList({
+    required this.channels,
+    required this.toSection,
+  });
+
+  final List<ChannelModel> channels;
+  final ContentSectionData Function(ChannelModel, int) toSection;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        for (int i = 0; i < channels.length; i++) ...[
+          SliverToBoxAdapter(
+            child: ContentSectionWidget(
+              section: toSection(channels[i], i),
+              onViewAll: () {}, // TODO: navigate to full channel view
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        ],
+        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+      ],
+    );
+  }
+}
+
+// ── Loading shimmer ───────────────────────────────────────────────────────────
+
+class _ContentShimmer extends StatelessWidget {
+  const _ContentShimmer();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+      itemCount: 2,
+      separatorBuilder: (_, _) => const SizedBox(height: 24),
+      itemBuilder: (_, _) => const _SectionShimmerBlock(),
+    );
+  }
+}
+
+class _SectionShimmerBlock extends StatefulWidget {
+  const _SectionShimmerBlock();
+
+  @override
+  State<_SectionShimmerBlock> createState() => _SectionShimmerBlockState();
+}
+
+class _SectionShimmerBlockState extends State<_SectionShimmerBlock>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+    _anim = Tween<double>(begin: -2, end: 2).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Widget _bar({double width = double.infinity, double height = 12, double radius = 6}) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, _) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          gradient: LinearGradient(
+            begin: Alignment(_anim.value - 1, 0),
+            end: Alignment(_anim.value, 0),
+            colors: const [Color(0xFFE8E8E8), Color(0xFFF8F8F8), Color(0xFFE8E8E8)],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header shimmer
+        Row(children: [
+          _bar(width: 36, height: 36, radius: 18),
+          const SizedBox(width: 10),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _bar(width: 100, height: 12),
+            const SizedBox(height: 6),
+            _bar(width: 60, height: 10),
+          ]),
+        ]),
+        const SizedBox(height: 12),
+        // Card shimmer row
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          child: Row(
+            children: List.generate(3, (i) => Padding(
+              padding: EdgeInsets.only(left: i == 0 ? 0 : 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _bar(width: 150, height: 84, radius: 8),
+                  const SizedBox(height: 6),
+                  _bar(width: 130, height: 11),
+                  const SizedBox(height: 4),
+                  _bar(width: 80, height: 10),
+                ],
+              ),
+            )),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+class _EmptyContent extends StatelessWidget {
+  const _EmptyContent();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.video_library_outlined, size: 48, color: Color(0xFFCCCCCC)),
+            SizedBox(height: 12),
+            Text(
+              'No content available\nfor this subject yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Color(0xFF888888), height: 1.5),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -1,5 +1,4 @@
 import '../../../../core/errors/app_exception.dart';
-import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/utils/logger.dart';
 import '../../domain/repositories/course_repository.dart';
 import '../models/category_model.dart';
@@ -7,7 +6,10 @@ import '../remote/course_api_service.dart';
 
 /// Concrete implementation of [CourseRepository].
 ///
-/// Adds offline detection and in-memory caching on top of [CourseApiService].
+/// Adds in-memory caching on top of [CourseApiService].
+/// Connectivity is NOT pre-checked — the HTTP call surfaces
+/// [NetworkException] / [RequestTimeoutException] reliably without the
+/// risk of connectivity_plus hanging on certain Android versions.
 class CourseRepositoryImpl implements CourseRepository {
   static const _tag = 'CourseRepositoryImpl';
 
@@ -21,17 +23,6 @@ class CourseRepositoryImpl implements CourseRepository {
 
   @override
   Future<List<CategoryModel>> getCategories() async {
-    final isConnected = await ConnectivityService.isConnected();
-
-    if (!isConnected) {
-      AppLogger.warning(_tag, 'Device is offline');
-      if (_cache != null) {
-        AppLogger.info(_tag, 'Serving ${_cache!.length} cached categories');
-        return _cache!;
-      }
-      throw const NetworkException();
-    }
-
     try {
       final categories = await _apiService.fetchHomeData();
       _cache = categories;

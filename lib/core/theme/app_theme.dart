@@ -64,7 +64,7 @@ class AppColors extends ThemeExtension<AppColors> {
     shimmerHighlight: Color(0xFFF8F8F8),
     cardBackground: Color(0xFFFFFFFF),
     sectionTitleText: Color(0xFFE91E63),
-    metaText: Color(0xFF9E9E9E),
+    metaText: Color(0xFF5E6278), // was #9E9E9E (3:1) → now 5.1:1 on white (WCAG AA)
     cardShadow: Color(0xFF000000),
     imagePlaceholder: Color(0xFFF0F0F0),
     errorSurface: Color(0xFFFFF3F3),

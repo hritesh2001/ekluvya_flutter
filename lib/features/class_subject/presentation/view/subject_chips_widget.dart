@@ -5,32 +5,27 @@ import '../../data/models/subject_item_model.dart';
 import '../viewmodel/class_subject_viewmodel.dart';
 import 'class_subject_shimmer_widget.dart';
 
-// ── Chip palette (always visible on the orange-purple gradient header) ────────
-
-/// Selected chip: solid white fill, dark label — stands out on gradient.
-const Color _selectedBg = Colors.white;
-const Color _selectedText = Color(0xFF1A0A2E);
-
-/// Unselected chip: white outline, white label — sits lightly on gradient.
-const Color _unselectedBorder = Color(0x80FFFFFF); // 50 % white
-const Color _unselectedText = Colors.white;
+// ── Brand gradient colours ────────────────────────────────────────────────────
+const Color _gradPink   = Color(0xFFE91E63);
+const Color _gradOrange = Color(0xFFFF5722);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Horizontal scrollable subject filter chips.
+/// Horizontally scrollable subject filter chips.
 ///
-/// Always occupies [_stripHeight] = 48 px, so the header band never
-/// collapses whether the state is loading, loaded, error or empty.
+/// UX pattern (education-app best practice):
+///   • Chips are content-sized — full subject name, no truncation.
+///   • User can swipe naturally OR tap the arrow buttons (scroll-by-amount).
+///   • Left/right edge fade hints that more chips exist off-screen.
+///   • Selected chip auto-scrolls to centre on each selection change.
+///   • All touch targets ≥ 44 × 44 px (WCAG / Material / Apple HIG).
 ///
-/// States:
-///   • loading / initial → [ClassSubjectShimmerWidget] (white shimmer pills)
-///   • error             → inline retry row
-///   • loaded + empty    → single "No subjects" stub chip
-///   • loaded + data     → tappable animated chips
+/// Selected  → white capsule, gradient text (pink → orange).
+/// Unselected → transparent capsule, white border (1.8 px), white text.
 class SubjectChipsWidget extends StatelessWidget {
   const SubjectChipsWidget({super.key});
 
-  static const double _stripHeight = 48.0;
+  static const double _stripHeight = 44.0;
 
   @override
   Widget build(BuildContext context) {
@@ -44,20 +39,17 @@ class SubjectChipsWidget extends StatelessWidget {
         return SizedBox(
           height: _stripHeight,
           child: switch (state) {
-            // ── Still loading — white shimmer pills ──────────────────
             ClassSubjectLoadState.initial ||
             ClassSubjectLoadState.loading =>
               const ClassSubjectShimmerWidget(),
 
-            // ── Error ────────────────────────────────────────────────
             ClassSubjectLoadState.error => _SubjectErrorRow(
                 onRetry: () =>
                     context.read<ClassSubjectViewModel>().retrySubjects(),
               ),
 
-            // ── Loaded ───────────────────────────────────────────────
             ClassSubjectLoadState.loaded => subjects.isEmpty
-                ? _EmptyRow()
+                ? const _EmptyRow()
                 : _ChipsRow(
                     subjects: subjects,
                     selected: selected,
@@ -71,7 +63,7 @@ class SubjectChipsWidget extends StatelessWidget {
   }
 }
 
-// ── Chips row (stateful for the scroll controller) ────────────────────────────
+// ── Chips row — free-scroll with arrow-scroll helpers ─────────────────────────
 
 class _ChipsRow extends StatefulWidget {
   const _ChipsRow({
@@ -91,6 +83,58 @@ class _ChipsRow extends StatefulWidget {
 class _ChipsRowState extends State<_ChipsRow> {
   final ScrollController _ctrl = ScrollController();
 
+  // One GlobalKey per subject so we can scroll it into view.
+  late final List<GlobalKey> _chipKeys;
+
+  // How far the arrows scroll per tap (roughly one chip width).
+  static const double _scrollStep = 96.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _chipKeys = List.generate(widget.subjects.length, (_) => GlobalKey());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+  }
+
+  @override
+  void didUpdateWidget(_ChipsRow old) {
+    super.didUpdateWidget(old);
+    // New subjects list — rebuild keys.
+    if (old.subjects.length != widget.subjects.length) {
+      _chipKeys
+        ..clear()
+        ..addAll(
+            List.generate(widget.subjects.length, (_) => GlobalKey()));
+    }
+    // Selected chip changed — bring it into view.
+    if (old.selected?.id != widget.selected?.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+    }
+  }
+
+  void _scrollToSelected() {
+    final idx =
+        widget.subjects.indexWhere((s) => s.id == widget.selected?.id);
+    if (idx < 0 || idx >= _chipKeys.length) return;
+    final ctx = _chipKeys[idx].currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.5, // centre the chip in the viewport
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _scrollBy(double delta) {
+    if (!_ctrl.hasClients) return;
+    _ctrl.animateTo(
+      (_ctrl.offset + delta).clamp(0.0, _ctrl.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
   @override
   void dispose() {
     _ctrl.dispose();
@@ -99,26 +143,87 @@ class _ChipsRowState extends State<_ChipsRow> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      controller: _ctrl,
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-      itemCount: widget.subjects.length,
-      separatorBuilder: (_, _) => const SizedBox(width: 8),
-      itemBuilder: (_, i) {
-        final subject = widget.subjects[i];
-        final isSelected = subject.id == widget.selected?.id;
-        return _SubjectChip(
-          label: subject.title,
-          isSelected: isSelected,
-          onTap: () => widget.onSelect(subject),
-        );
-      },
+    return Row(
+      children: [
+        // ── Left arrow ──────────────────────────────────────────────────
+        _ArrowButton(
+          icon: Icons.chevron_left_rounded,
+          onTap: () => _scrollBy(-_scrollStep),
+        ),
+
+        // ── Scrollable chip list with fade edges ────────────────────────
+        Expanded(
+          child: ShaderMask(
+            // Fade 14 px on each edge to hint there's more content.
+            shaderCallback: (bounds) => const LinearGradient(
+              colors: [
+                Colors.transparent,
+                Colors.white,
+                Colors.white,
+                Colors.transparent,
+              ],
+              stops: [0.0, 0.06, 0.94, 1.0],
+            ).createShader(bounds),
+            blendMode: BlendMode.dstIn,
+            child: ListView.separated(
+              controller: _ctrl,
+              scrollDirection: Axis.horizontal,
+              // Horizontal padding gives space for the fade zone.
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              physics: const BouncingScrollPhysics(),
+              itemCount: widget.subjects.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final subject = widget.subjects[i];
+                return KeyedSubtree(
+                  key: _chipKeys[i],
+                  child: _SubjectChip(
+                    label: subject.title,
+                    isSelected: subject.id == widget.selected?.id,
+                    onTap: () => widget.onSelect(subject),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+
+        // ── Right arrow ─────────────────────────────────────────────────
+        _ArrowButton(
+          icon: Icons.chevron_right_rounded,
+          onTap: () => _scrollBy(_scrollStep),
+        ),
+      ],
     );
   }
 }
 
-// ── Single animated chip ──────────────────────────────────────────────────────
+// ── Arrow scroll-hint button ──────────────────────────────────────────────────
+
+class _ArrowButton extends StatelessWidget {
+  const _ArrowButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      // opaque so transparent pixels inside the box still register taps
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 44,   // meets 44 px minimum touch target
+        height: SubjectChipsWidget._stripHeight,
+        child: Center(
+          child: Icon(icon, color: Colors.white, size: 26),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Single animated capsule chip ──────────────────────────────────────────────
 
 class _SubjectChip extends StatelessWidget {
   const _SubjectChip({
@@ -128,37 +233,69 @@ class _SubjectChip extends StatelessWidget {
   });
 
   final String label;
-  final bool isSelected;
+  final bool   isSelected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeInOut,
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? _selectedBg : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? Colors.transparent : _unselectedBorder,
-            width: 1.2,
+    return Semantics(
+      label: label,
+      selected: isSelected,
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          // Height fills the row; no fixed width — chip sizes to label.
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(50), // full capsule
+            border: Border.all(
+              color: Colors.white,
+              width: isSelected ? 2.5 : 1.8,
+            ),
           ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? _selectedText : _unselectedText,
-            fontSize: 12,
-            fontWeight:
-                isSelected ? FontWeight.bold : FontWeight.w500,
-            letterSpacing: 0.2,
-          ),
+          alignment: Alignment.center,
+          child: _ChipLabel(label: label, isSelected: isSelected),
         ),
       ),
+    );
+  }
+}
+
+// ── Label: gradient text on selected, plain white on unselected ───────────────
+
+class _ChipLabel extends StatelessWidget {
+  const _ChipLabel({required this.label, required this.isSelected});
+
+  final String label;
+  final bool   isSelected;
+
+  static const _textGradient = LinearGradient(
+    colors: [_gradPink, _gradOrange],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontSize: 12,
+      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+      letterSpacing: 0.3,
+      color: Colors.white, // base colour required for ShaderMask
+    );
+
+    if (!isSelected) {
+      return Text(label, style: style);
+    }
+
+    return ShaderMask(
+      shaderCallback: (bounds) => _textGradient.createShader(bounds),
+      blendMode: BlendMode.srcIn,
+      child: Text(label, style: style),
     );
   }
 }
@@ -166,18 +303,14 @@ class _SubjectChip extends StatelessWidget {
 // ── Fallback states ───────────────────────────────────────────────────────────
 
 class _EmptyRow extends StatelessWidget {
+  const _EmptyRow();
+
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-      child: Center(
-        child: Text(
-          'No subjects available',
-          style: TextStyle(
-            color: Color(0xCCFFFFFF),
-            fontSize: 12,
-          ),
-        ),
+    return const Center(
+      child: Text(
+        'No subjects available',
+        style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 12),
       ),
     );
   }
@@ -190,16 +323,16 @@ class _SubjectErrorRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
           const Icon(Icons.warning_amber_rounded,
-              color: Colors.white70, size: 16),
+              color: Colors.white70, size: 14),
           const SizedBox(width: 6),
           const Expanded(
             child: Text(
               'Could not load subjects',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: Colors.white70, fontSize: 11),
             ),
           ),
           GestureDetector(
@@ -209,7 +342,7 @@ class _SubjectErrorRow extends StatelessWidget {
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.white38),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(50),
               ),
               child: const Text(
                 'Retry',

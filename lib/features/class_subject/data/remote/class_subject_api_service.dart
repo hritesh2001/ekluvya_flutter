@@ -7,19 +7,20 @@ import 'package:http/http.dart' as http;
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/utils/logger.dart';
+import '../models/chapter_model.dart';
 import '../models/class_model.dart';
 import '../models/subject_item_model.dart';
 
 /// Fetches classes and subjects from:
-///   GET [mediaBaseUrl]/home/classes?courseId=&page=&limit=15&is_pagination=true
+///   GET [mediaBaseUrl]/home/classes?courseId=&page=1&limit=15&is_pagination=true
 ///   GET [mediaBaseUrl]/home/subjects?courseId=&classId=&page=1&limit=25&is_pagination=true
+///
+/// Both endpoints are public — no auth header required.
 class ClassSubjectApiService {
   static const _tag = 'ClassSubjectApiService';
 
   // ── Classes ────────────────────────────────────────────────────────────────
 
-  /// Fetches all classes for [courseId].
-  /// Paginates automatically until all pages are consumed or [limit] is reached.
   Future<List<ClassModel>> fetchClasses({
     required String courseId,
     int page = 1,
@@ -45,7 +46,6 @@ class ClassSubjectApiService {
 
   // ── Subjects ───────────────────────────────────────────────────────────────
 
-  /// Fetches subjects for the given [courseId] + [classId] combination.
   Future<List<SubjectItemModel>> fetchSubjects({
     required String courseId,
     required String classId,
@@ -71,21 +71,85 @@ class ClassSubjectApiService {
     }
   }
 
+  // ── Chapters ───────────────────────────────────────────────────────────────
+
+  Future<List<ChapterModel>> fetchChapters({
+    required String courseId,
+    required String classId,
+    required String subjectId,
+  }) async {
+    // Endpoint and param order confirmed from Android network logs.
+    final url =
+        '${AppConstants.mediaBaseUrl}/home/all/chapterlist'
+        '?courseId=$courseId&subjectId=$subjectId&classId=$classId';
+
+    AppLogger.info(_tag, 'GET chapterlist → $url');
+
+    try {
+      final res = await http
+          .get(Uri.parse(url))
+          .timeout(AppConstants.apiTimeout);
+
+      AppLogger.info(_tag, 'Chapterlist response ${res.statusCode}');
+      return _parseChapterList(res);
+    } catch (e, st) {
+      return _handleError<ChapterModel>(e, st, 'fetchChapters');
+    }
+  }
+
+  List<ChapterModel> _parseChapterList(http.Response res) {
+    if (res.body.trimLeft().startsWith('<!')) {
+      AppLogger.error(_tag, 'Received HTML instead of JSON for chapterlist');
+      throw const ParseException();
+    }
+
+    final Map<String, dynamic> decoded;
+    try {
+      final raw = jsonDecode(res.body);
+      if (raw is! Map<String, dynamic>) throw const ParseException();
+      decoded = raw;
+    } on FormatException catch (e) {
+      AppLogger.error(_tag, 'JSON parse error for chapterlist: $e');
+      throw const ParseException();
+    }
+
+    final ok = decoded['status'] == 'success' ||
+        (decoded['statusCode'] as num?)?.toInt() == 200;
+    if (!ok) {
+      final msg = decoded['message']?.toString() ?? 'Server error';
+      throw ServerException(msg);
+    }
+
+    // Response key is "chapterList", not "data".
+    final response = decoded['response'];
+    final rawList = (response is Map<String, dynamic>)
+        ? response['chapterList'] as List?
+        : null;
+
+    if (rawList == null) {
+      AppLogger.warning(_tag, 'No chapterList in response');
+      return [];
+    }
+
+    final chapters = rawList
+        .whereType<Map<String, dynamic>>()
+        .map(ChapterModel.fromJson)
+        .where((c) => c.hasValidId)
+        .toList()
+      // Sort ascending by order so the first chapter is the lowest-order one.
+      ..sort((a, b) => a.order.compareTo(b.order));
+
+    AppLogger.info(_tag, 'Parsed ${chapters.length} chapters');
+    return chapters;
+  }
+
   // ── Shared helpers ─────────────────────────────────────────────────────────
 
-  /// Decodes an HTTP response and extracts the list of [T] from
-  /// `response.data` (the common API envelope pattern).
-  ///
-  /// Supported envelope shapes:
-  ///   { "status": "success", "response": { "data": [...] } }
-  ///   { "statusCode": 200,   "response": { "data": [...] } }
-  ///   { "statusCode": 200,   "data": [...] }           ← flat fallback
   List<T> _parseList<T>(
     http.Response res,
     T Function(Map<String, dynamic>) fromJson,
     String debugLabel,
   ) {
-    // Guard: server returned HTML (e.g. nginx error page)
     if (res.body.trimLeft().startsWith('<!')) {
       throw const ParseException();
     }
@@ -100,7 +164,6 @@ class ClassSubjectApiService {
       throw const ParseException();
     }
 
-    // Status check
     final ok = decoded['status'] == 'success' ||
         (decoded['statusCode'] as num?)?.toInt() == 200;
     if (!ok) {
@@ -108,7 +171,6 @@ class ClassSubjectApiService {
       throw ServerException(msg);
     }
 
-    // Try nested envelope first, fall back to flat `data`
     List? rawList;
     final response = decoded['response'];
     if (response is Map<String, dynamic>) {
@@ -125,9 +187,9 @@ class ClassSubjectApiService {
         .whereType<Map<String, dynamic>>()
         .map(fromJson)
         .where((item) {
-          // Filter out items with empty IDs to skip malformed entries
           if (item is ClassModel) return item.id.isNotEmpty;
           if (item is SubjectItemModel) return item.id.isNotEmpty;
+          if (item is ChapterModel) return item.hasValidId;
           return true;
         })
         .toList();
@@ -136,7 +198,6 @@ class ClassSubjectApiService {
     return items;
   }
 
-  /// Normalises low-level Dart/HTTP exceptions into typed [AppException]s.
   List<T> _handleError<T>(Object e, StackTrace st, String method) {
     if (e is AppException) throw e;
     AppLogger.error(_tag, '$method error', e, st);

@@ -1,19 +1,10 @@
-import '../../../../core/errors/app_exception.dart';
-import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/utils/logger.dart';
 import '../../domain/repositories/class_subject_repository.dart';
+import '../models/chapter_model.dart';
 import '../models/class_model.dart';
 import '../models/subject_item_model.dart';
 import '../remote/class_subject_api_service.dart';
 
-/// Concrete implementation of [ClassSubjectRepository].
-///
-/// Adds:
-///   - In-memory per-key caching (survives app session, cleared on restart).
-///   - Request deduplication: a second call for the same key while the first
-///     is in-flight waits for the same [Future] rather than firing a new HTTP
-///     request.
-///   - Offline detection with graceful stale-cache fallback.
 class ClassSubjectRepositoryImpl implements ClassSubjectRepository {
   static const _tag = 'ClassSubjectRepositoryImpl';
 
@@ -22,102 +13,112 @@ class ClassSubjectRepositoryImpl implements ClassSubjectRepository {
   ClassSubjectRepositoryImpl({required ClassSubjectApiService apiService})
       : _api = apiService;
 
-  // ── Caches ─────────────────────────────────────────────────────────────────
-
-  /// Key: courseId
   final Map<String, List<ClassModel>> _classesCache = {};
-
-  /// Key: '$courseId:$classId'
   final Map<String, List<SubjectItemModel>> _subjectsCache = {};
-
-  // ── In-flight deduplication ────────────────────────────────────────────────
+  final Map<String, List<ChapterModel>> _chaptersCache = {};
 
   final Map<String, Future<List<ClassModel>>> _classesFlight = {};
   final Map<String, Future<List<SubjectItemModel>>> _subjectsFlight = {};
-
-  // ── ClassSubjectRepository ─────────────────────────────────────────────────
+  final Map<String, Future<List<ChapterModel>>> _chaptersFlight = {};
 
   @override
-  Future<List<ClassModel>> getClasses({required String courseId}) async {
-    final isConnected = await ConnectivityService.isConnected();
-
-    if (!isConnected) {
-      AppLogger.warning(_tag, 'Offline — checking classes cache for $courseId');
-      final cached = _classesCache[courseId];
-      if (cached != null) return cached;
-      throw const NetworkException();
-    }
-
-    // Return in-flight future directly (deduplication)
+  Future<List<ClassModel>> getClasses({required String courseId}) {
     if (_classesFlight.containsKey(courseId)) {
-      AppLogger.info(_tag, 'Reusing in-flight classes request for $courseId');
       return _classesFlight[courseId]!;
     }
-
-    final future = _api
-        .fetchClasses(courseId: courseId)
-        .then((classes) {
-          _classesCache[courseId] = classes;
-          AppLogger.info(
-              _tag, 'Cached ${classes.length} classes for course $courseId');
-          return classes;
-        })
-        .catchError((Object e) {
-          AppLogger.error(_tag, 'fetchClasses failed for $courseId', e);
-          final cached = _classesCache[courseId];
-          if (cached != null) {
-            AppLogger.info(_tag, 'Returning stale classes cache');
-            return cached;
-          }
-          throw e;
-        })
-        .whenComplete(() => _classesFlight.remove(courseId));
-
+    final future = _fetchClasses(courseId);
     _classesFlight[courseId] = future;
     return future;
+  }
+
+  Future<List<ClassModel>> _fetchClasses(String courseId) async {
+    try {
+      final classes = await _api.fetchClasses(courseId: courseId);
+      _classesCache[courseId] = classes;
+      AppLogger.info(_tag, 'Fetched ${classes.length} classes for $courseId');
+      return classes;
+    } catch (e) {
+      AppLogger.error(_tag, 'fetchClasses failed for $courseId: $e');
+      final cached = _classesCache[courseId];
+      if (cached != null) {
+        AppLogger.info(_tag, 'Returning stale classes cache');
+        return cached;
+      }
+      rethrow;
+    } finally {
+      _classesFlight.remove(courseId);
+    }
   }
 
   @override
   Future<List<SubjectItemModel>> getSubjects({
     required String courseId,
     required String classId,
-  }) async {
-    final cacheKey = '$courseId:$classId';
-    final isConnected = await ConnectivityService.isConnected();
-
-    if (!isConnected) {
-      AppLogger.warning(_tag, 'Offline — checking subjects cache for $cacheKey');
-      final cached = _subjectsCache[cacheKey];
-      if (cached != null) return cached;
-      throw const NetworkException();
+  }) {
+    final key = '$courseId:$classId';
+    if (_subjectsFlight.containsKey(key)) {
+      return _subjectsFlight[key]!;
     }
-
-    if (_subjectsFlight.containsKey(cacheKey)) {
-      AppLogger.info(
-          _tag, 'Reusing in-flight subjects request for $cacheKey');
-      return _subjectsFlight[cacheKey]!;
-    }
-
-    final future = _api
-        .fetchSubjects(courseId: courseId, classId: classId)
-        .then((subjects) {
-          _subjectsCache[cacheKey] = subjects;
-          AppLogger.info(
-              _tag, 'Cached ${subjects.length} subjects for $cacheKey');
-          return subjects;
-        })
-        .catchError((Object e) {
-          AppLogger.error(_tag, 'fetchSubjects failed for $cacheKey', e);
-          final cached = _subjectsCache[cacheKey];
-          if (cached != null) {
-            AppLogger.info(_tag, 'Returning stale subjects cache');
-            return cached;
-          }
-          throw e;
-        })
-        .whenComplete(() => _subjectsFlight.remove(cacheKey));
-
-    _subjectsFlight[cacheKey] = future;
+    final future = _fetchSubjects(courseId, classId, key);
+    _subjectsFlight[key] = future;
     return future;
+  }
+
+  Future<List<SubjectItemModel>> _fetchSubjects(
+      String courseId, String classId, String key) async {
+    try {
+      final subjects =
+          await _api.fetchSubjects(courseId: courseId, classId: classId);
+      _subjectsCache[key] = subjects;
+      AppLogger.info(_tag, 'Fetched ${subjects.length} subjects for $key');
+      return subjects;
+    } catch (e) {
+      AppLogger.error(_tag, 'fetchSubjects failed for $key: $e');
+      final cached = _subjectsCache[key];
+      if (cached != null) {
+        AppLogger.info(_tag, 'Returning stale subjects cache');
+        return cached;
+      }
+      rethrow;
+    } finally {
+      _subjectsFlight.remove(key);
+    }
+  }
+
+  @override
+  Future<List<ChapterModel>> getChapters({
+    required String courseId,
+    required String classId,
+    required String subjectId,
+  }) {
+    final key = '$courseId:$classId:$subjectId';
+    if (_chaptersFlight.containsKey(key)) return _chaptersFlight[key]!;
+    final future = _fetchChapters(courseId, classId, subjectId, key);
+    _chaptersFlight[key] = future;
+    return future;
+  }
+
+  Future<List<ChapterModel>> _fetchChapters(
+      String courseId, String classId, String subjectId, String key) async {
+    try {
+      final chapters = await _api.fetchChapters(
+        courseId: courseId,
+        classId: classId,
+        subjectId: subjectId,
+      );
+      _chaptersCache[key] = chapters;
+      AppLogger.info(_tag, 'Fetched ${chapters.length} chapters for $key');
+      return chapters;
+    } catch (e) {
+      AppLogger.error(_tag, 'fetchChapters failed for $key: $e');
+      final cached = _chaptersCache[key];
+      if (cached != null) {
+        AppLogger.info(_tag, 'Returning stale chapters cache');
+        return cached;
+      }
+      rethrow;
+    } finally {
+      _chaptersFlight.remove(key);
+    }
   }
 }

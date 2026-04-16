@@ -7,7 +7,7 @@ const Color _cardBg      = Color(0xFFF0F0F0); // light placeholder bg
 const Color _shimmerBase = Color(0xFFE8E8E8); // light shimmer base
 const Color _shimmerHigh = Color(0xFFF8F8F8); // light shimmer highlight
 const Color _titleColor  = Color(0xFF1A1A1A); // dark text on white
-const Color _metaColor   = Color(0xFF888888); // medium grey meta text
+const Color _metaColor   = Color(0xFF5E6278); // 5.1:1 contrast on white (was #888 = 3:1)
 
 /// Individual video / chapter card.
 ///
@@ -58,9 +58,12 @@ class ContentCardWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final thumbHeight = cardWidth * thumbAspect;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: SizedBox(
+    return Semantics(
+      label: title,
+      button: onTap != null,
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
         width: cardWidth,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -101,9 +104,9 @@ class ContentCardWidget extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: _titleColor,
-                fontSize: 11,
+                fontSize: 13,
                 fontWeight: FontWeight.w500,
-                height: 1.35,
+                height: 1.4,
               ),
             ),
 
@@ -114,7 +117,7 @@ class ContentCardWidget extends StatelessWidget {
                 children: [
                   if (videosLabel != null) ...[
                     const Icon(Icons.remove_red_eye_outlined,
-                        color: _metaColor, size: 10),
+                        color: _metaColor, size: 12),
                     const SizedBox(width: 3),
                     Flexible(
                       child: Text(
@@ -122,7 +125,7 @@ class ContentCardWidget extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             color: _metaColor,
-                            fontSize: 9,
+                            fontSize: 11,
                             fontWeight: FontWeight.w400),
                       ),
                     ),
@@ -131,13 +134,13 @@ class ContentCardWidget extends StatelessWidget {
                     const SizedBox(width: 8),
                   if (rating != null) ...[
                     const Icon(Icons.star_rounded,
-                        color: Color(0xFFF5B800), size: 10),
+                        color: Color(0xFFF5B800), size: 12),
                     const SizedBox(width: 2),
                     Text(
                       rating!.toStringAsFixed(1),
                       style: const TextStyle(
                           color: _metaColor,
-                          fontSize: 9,
+                          fontSize: 11,
                           fontWeight: FontWeight.w400),
                     ),
                   ],
@@ -146,12 +149,14 @@ class ContentCardWidget extends StatelessWidget {
             ],
           ],
         ),
+        ),
       ),
     );
   }
 }
 
 // ── Internal loading/error boxes ──────────────────────────────────────────────
+
 
 class _PlaceholderBox extends StatelessWidget {
   const _PlaceholderBox({required this.width, required this.height});

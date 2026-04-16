@@ -9,6 +9,9 @@ import 'features/banner/data/remote/banner_api_service.dart';
 import 'features/banner/data/repository/banner_repository_impl.dart';
 import 'features/banner/domain/repositories/banner_repository.dart';
 import 'features/banner/presentation/viewmodel/banner_viewmodel.dart';
+import 'features/channel/data/remote/channel_api_service.dart';
+import 'features/channel/data/repository/channel_repository_impl.dart';
+import 'features/channel/domain/repositories/channel_repository.dart';
 import 'features/class_subject/data/remote/class_subject_api_service.dart';
 import 'features/class_subject/data/repository/class_subject_repository_impl.dart';
 import 'features/class_subject/domain/repositories/class_subject_repository.dart';
@@ -120,6 +123,19 @@ class _AppProviders extends StatelessWidget {
           ),
           update: (_, api, previous) =>
               previous ?? ClassSubjectRepositoryImpl(apiService: api),
+        ),
+
+        // ── Channel (partner content) module ─────────────────────────────
+        // ChannelRepository is registered globally so the in-memory cache
+        // survives navigation and avoids duplicate requests across visits.
+        Provider<ChannelApiService>(create: (_) => ChannelApiService()),
+
+        ProxyProvider<ChannelApiService, ChannelRepository>(
+          create: (ctx) => ChannelRepositoryImpl(
+            apiService: ctx.read<ChannelApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? ChannelRepositoryImpl(apiService: api),
         ),
       ],
       child: const MyApp(),

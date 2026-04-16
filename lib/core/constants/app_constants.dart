@@ -8,11 +8,16 @@ abstract class AppConstants {
   static const String mediaBaseUrl =
       'https://stg-ottapi.ekluvya.guru/mediaview/api/v1';
 
-  /// CloudFront CDN base URL for all media assets.
+  /// CloudFront CDN base URL for banner assets.
   /// Final URL = bannerImageBaseUrl + bannerImg field from API.
-  /// e.g. base + "banner-images/xyz.png"
-  ///   → https://d38zvxejdrf8bt.cloudfront.net/banner-images/xyz.png
   static const String bannerImageBaseUrl =
+      'https://d38zvxejdrf8bt.cloudfront.net/';
+
+  /// CDN base URL for video thumbnail images returned by channel-list API.
+  /// Thumbnail paths in API are relative (e.g. "gudsho-upload-.../blob.jpg").
+  /// Final URL = thumbnailCdnBaseUrl + path.
+  /// Verify this value against the network tab if images don't load.
+  static const String thumbnailCdnBaseUrl =
       'https://d38zvxejdrf8bt.cloudfront.net/';
 
   /// Global timeout for every HTTP request.

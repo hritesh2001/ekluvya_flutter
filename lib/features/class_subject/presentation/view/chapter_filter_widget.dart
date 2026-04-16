@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/models/chapter_model.dart';
 import '../viewmodel/class_subject_viewmodel.dart';
 
 // ── Palette — white surface ───────────────────────────────────────────────────
 
-/// "Chapters" label: dark text on white background.
 const Color _labelColor = Color(0xFF1A1A1A);
-
-/// Chapter pill: near-black background with white text, matching the design.
 const Color _pillBg   = Color(0xFF1A1A1A);
 const Color _pillText = Colors.white;
 
@@ -19,18 +17,19 @@ const Color _pillText = Colors.white;
 /// Layout:
 ///   Chapters   [BASIC MATHEMATICS ▼]
 ///
-/// "Chapters" is a plain dark label.
-/// The chapter name is a tappable dark rounded pill with a chevron.
-/// Tapping opens a bottom sheet listing all chapters.
+/// Displays the selected chapter name as a tappable pill.
+/// Tapping opens a bottom sheet listing all chapters from the real API.
 class ChapterFilterWidget extends StatelessWidget {
   const ChapterFilterWidget({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Selector<ClassSubjectViewModel, (List<String>, String?)>(
-      selector: (_, vm) => (vm.chapters, vm.selectedChapter),
+    return Selector<ClassSubjectViewModel,
+        (List<ChapterModel>, ChapterModel?, bool)>(
+      selector: (_, vm) =>
+          (vm.chapters, vm.selectedChapter, vm.chaptersLoading),
       builder: (context, data, _) {
-        final (chapters, selectedChapter) = data;
+        final (chapters, selectedChapter, loading) = data;
 
         return SizedBox(
           height: 40,
@@ -51,15 +50,16 @@ class ChapterFilterWidget extends StatelessWidget {
               const SizedBox(width: 12),
 
               // ── Chapter picker pill ───────────────────────────────
-              if (chapters.isNotEmpty)
+              if (loading)
+                const _LoadingPill()
+              else if (chapters.isNotEmpty)
                 _ChapterPill(
-                  label: selectedChapter ?? chapters.first,
+                  label: selectedChapter?.title ?? chapters.first.title,
                   onTap: () => _showChapterPicker(
                     context,
                     chapters: chapters,
                     selected: selectedChapter,
-                    onSelect:
-                        context.read<ClassSubjectViewModel>().selectChapter,
+                    onSelect: context.read<ClassSubjectViewModel>().selectChapter,
                   ),
                 ),
             ],
@@ -71,9 +71,9 @@ class ChapterFilterWidget extends StatelessWidget {
 
   void _showChapterPicker(
     BuildContext context, {
-    required List<String> chapters,
-    required String? selected,
-    required ValueChanged<String> onSelect,
+    required List<ChapterModel> chapters,
+    required ChapterModel? selected,
+    required ValueChanged<ChapterModel> onSelect,
   }) {
     showModalBottomSheet<void>(
       context: context,
@@ -86,6 +86,31 @@ class ChapterFilterWidget extends StatelessWidget {
           onSelect(ch);
           Navigator.of(sheetCtx).pop();
         },
+      ),
+    );
+  }
+}
+
+// ── Loading pill ──────────────────────────────────────────────────────────────
+
+class _LoadingPill extends StatelessWidget {
+  const _LoadingPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: _pillBg.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const SizedBox(
+        width: 80,
+        height: 14,
+        child: LinearProgressIndicator(
+          backgroundColor: Colors.transparent,
+          color: Colors.white54,
+        ),
       ),
     );
   }
@@ -142,9 +167,9 @@ class _ChapterPickerSheet extends StatelessWidget {
     required this.onSelect,
   });
 
-  final List<String> chapters;
-  final String? selected;
-  final ValueChanged<String> onSelect;
+  final List<ChapterModel> chapters;
+  final ChapterModel? selected;
+  final ValueChanged<ChapterModel> onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -157,7 +182,6 @@ class _ChapterPickerSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 12),
-          // Handle
           Container(
             width: 40,
             height: 4,
@@ -167,7 +191,6 @@ class _ChapterPickerSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          // Title
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 20),
             child: Align(
@@ -183,7 +206,6 @@ class _ChapterPickerSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          // List
           ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.sizeOf(context).height * 0.45,
@@ -195,13 +217,13 @@ class _ChapterPickerSheet extends StatelessWidget {
               separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final ch = chapters[i];
-                final isSelected = ch == selected;
+                final isSelected = ch.id == selected?.id;
                 return ListTile(
                   dense: true,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 8),
                   title: Text(
-                    ch,
+                    ch.title,
                     style: TextStyle(
                       color: isSelected
                           ? const Color(0xFFE91E63)

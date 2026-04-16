@@ -6,7 +6,16 @@
       "Bash(curl -s \"https://stg-ottapi.ekluvya.guru/mediaview/api/v1/home/gethome-data?limit=5&inside_limit=2\")",
       "Bash(python3 -m json.tool)",
       "Bash(flutter pub:*)",
-      "Bash(flutter analyze:*)"
+      "Bash(flutter analyze:*)",
+      "Bash(git clone:*)",
+      "Bash(npx uipro-cli *)",
+      "Bash(claude plugin *)",
+      "Bash(npm install *)",
+      "Read(//c/Users/EKLUVYA/.claude/skills/code-review-graph/**)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python -m pip install code-review-graph)",
+      "Bash(pipx install *)"
     ]
   }
 }
