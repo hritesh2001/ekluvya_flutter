@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../features/badge/domain/repositories/badge_repository.dart';
+import '../../../../features/badge/presentation/viewmodel/badge_viewmodel.dart';
 import '../../../../features/channel/data/models/channel_model.dart';
 import '../../../../features/channel/domain/repositories/channel_repository.dart';
 import '../../../../features/channel/presentation/viewmodel/channel_viewmodel.dart';
+import '../../../../features/rating/domain/repositories/rating_repository.dart';
+import '../../../../features/rating/presentation/viewmodel/rating_viewmodel.dart';
+import '../../../../features/signed_cookie/domain/repositories/signed_cookie_repository.dart';
+import '../../../../features/signed_cookie/presentation/viewmodel/signed_cookie_viewmodel.dart';
 import '../../domain/repositories/class_subject_repository.dart';
 import '../viewmodel/class_subject_viewmodel.dart';
 import 'chapter_filter_widget.dart';
@@ -57,6 +63,21 @@ class CourseDetailScreen extends StatelessWidget {
         ChangeNotifierProvider(
           create: (ctx) => ChannelViewModel(
             repository: ctx.read<ChannelRepository>(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (ctx) => BadgeViewModel(
+            repository: ctx.read<BadgeRepository>(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (ctx) => RatingViewModel(
+            repository: ctx.read<RatingRepository>(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (ctx) => SignedCookieViewModel(
+            repository: ctx.read<SignedCookieRepository>(),
           ),
         ),
       ],
@@ -248,19 +269,6 @@ class _ChapterFilterRow extends StatelessWidget {
   }
 }
 
-// ── Channel colour palette — cycled by index ──────────────────────────────────
-
-const List<Color> _channelColors = [
-  Color(0xFFE91E63), // brand pink
-  Color(0xFF7C3AED), // purple
-  Color(0xFF0EA5E9), // sky blue
-  Color(0xFF16A34A), // green
-  Color(0xFFF97316), // orange
-  Color(0xFF0891B2), // cyan
-];
-
-Color _colorForIndex(int i) => _channelColors[i % _channelColors.length];
-
 // ── Content scroll view — real API data ───────────────────────────────────────
 
 /// Stateful so it can track the last-loaded filter params and trigger
@@ -280,31 +288,38 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
   String? _loadedSubjectId;
   String? _loadedChapterId;
 
-  /// Converts a [ChannelModel] → [ContentSectionData] for the existing widget.
-  ContentSectionData _toSection(ChannelModel ch, int index) {
-    final items = ch.videos.map((v) {
-      final label = v.durationSeconds > 0 ? v.formattedDuration : null;
-      return ContentItemData(
-        id: v.id,
-        title: v.title,
-        thumbnailUrl: v.thumbnailUrl,
-        videosLabel: label,
-      );
-    }).toList();
+  /// Converts a [ChannelModel] → [ContentSectionData], enriched with
+  /// badge (Most Loved / Most Watched) and rating data.
+  ContentSectionData _toSection(
+    ChannelModel ch,
+    BadgeViewModel badgeVM,
+    RatingViewModel ratingVM,
+  ) {
+    final items = ch.videos.map((v) => ContentItemData(
+      id: v.id,
+      title: v.title,
+      thumbnailUrl: v.thumbnailUrl,
+    )).toList();
+
+    final rating = ratingVM.ratingForChannel(ch.id);
 
     return ContentSectionData(
       id: ch.id,
       sourceName: ch.title,
-      sourceColor: _colorForIndex(index),
       videoCount: ch.totalVideos,
       items: items,
+      badges: badgeVM.badgesForChannel(ch.id),
+      rating: rating > 0 ? rating : null,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer2<ClassSubjectViewModel, ChannelViewModel>(
-      builder: (ctx, csVM, channelVM, _) {
+    return Consumer<SignedCookieViewModel>(
+      builder: (ctx, signedCookieVM, _) =>
+        Consumer4<ClassSubjectViewModel, ChannelViewModel, BadgeViewModel,
+            RatingViewModel>(
+          builder: (ctx, csVM, channelVM, badgeVM, ratingVM, _) {
         // ── Show class-level error when no class loaded yet ──────────────
         if (csVM.classesHasError && csVM.selectedClass == null) {
           return _ErrorState(
@@ -313,11 +328,8 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
           );
         }
 
-        // ── Trigger channel load when class + subject are ready ──────────
-        // Load immediately even without a chapterId so content is visible.
-        // When chapters load later and auto-select the first one, chapterId
-        // changes → we re-load with the proper ID → correct filtered data.
-        final classId = csVM.selectedClass?.id;
+        // ── Trigger channel / badge / rating / signed-cookie loads ───────
+        final classId   = csVM.selectedClass?.id;
         final subjectId = csVM.selectedSubject?.id;
         final chapterId = csVM.selectedChapter?.id ?? '';
 
@@ -326,10 +338,9 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
               subjectId != _loadedSubjectId ||
               chapterId != (_loadedChapterId ?? '');
           if (paramsChanged) {
-            _loadedClassId = classId;
+            _loadedClassId   = classId;
             _loadedSubjectId = subjectId;
             _loadedChapterId = chapterId;
-            // Post-frame to avoid mutating state during build.
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               channelVM.load(
@@ -338,6 +349,18 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
                 subjectId: subjectId,
                 chapterId: chapterId,
               );
+              badgeVM.load(
+                courseId: csVM.courseId,
+                chapterId: chapterId,
+              );
+              ratingVM.load(
+                courseId: csVM.courseId,
+                classId: classId,
+                subjectId: subjectId,
+                chapterId: chapterId,
+              );
+              // Fire once — idempotent, non-fatal, cached for cookie lifetime
+              signedCookieVM.fetch();
             });
           }
         }
@@ -357,10 +380,11 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
 
           ChannelLoadState.loaded => _ChannelList(
               channels: channelVM.channels,
-              toSection: _toSection,
+              toSection: (ch, _) => _toSection(ch, badgeVM, ratingVM),
             ),
         };
       },
+        ),
     );
   }
 }
@@ -381,7 +405,7 @@ class _ChannelList extends StatelessWidget {
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        const SliverToBoxAdapter(child: SizedBox(height: 4)),
         for (int i = 0; i < channels.length; i++) ...[
           SliverToBoxAdapter(
             child: ContentSectionWidget(
@@ -389,7 +413,7 @@ class _ChannelList extends StatelessWidget {
               onViewAll: () {}, // TODO: navigate to full channel view
             ),
           ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
         ],
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
       ],

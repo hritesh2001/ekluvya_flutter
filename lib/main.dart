@@ -5,6 +5,15 @@ import 'package:provider/provider.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/utils/logger.dart';
+import 'features/badge/data/remote/badge_api_service.dart';
+import 'features/badge/data/repository/badge_repository_impl.dart';
+import 'features/badge/domain/repositories/badge_repository.dart';
+import 'features/rating/data/remote/rating_api_service.dart';
+import 'features/rating/data/repository/rating_repository_impl.dart';
+import 'features/rating/domain/repositories/rating_repository.dart';
+import 'features/signed_cookie/data/remote/signed_cookie_api_service.dart';
+import 'features/signed_cookie/data/repository/signed_cookie_repository_impl.dart';
+import 'features/signed_cookie/domain/repositories/signed_cookie_repository.dart';
 import 'features/banner/data/remote/banner_api_service.dart';
 import 'features/banner/data/repository/banner_repository_impl.dart';
 import 'features/banner/domain/repositories/banner_repository.dart';
@@ -126,8 +135,6 @@ class _AppProviders extends StatelessWidget {
         ),
 
         // ── Channel (partner content) module ─────────────────────────────
-        // ChannelRepository is registered globally so the in-memory cache
-        // survives navigation and avoids duplicate requests across visits.
         Provider<ChannelApiService>(create: (_) => ChannelApiService()),
 
         ProxyProvider<ChannelApiService, ChannelRepository>(
@@ -136,6 +143,46 @@ class _AppProviders extends StatelessWidget {
           ),
           update: (_, api, previous) =>
               previous ?? ChannelRepositoryImpl(apiService: api),
+        ),
+
+        // ── Badge module ──────────────────────────────────────────────────
+        // BadgeRepository is global so its cache persists across chapter
+        // switches and screen re-visits.
+        Provider<BadgeApiService>(create: (_) => BadgeApiService()),
+
+        ProxyProvider<BadgeApiService, BadgeRepository>(
+          create: (ctx) => BadgeRepositoryImpl(
+            apiService: ctx.read<BadgeApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? BadgeRepositoryImpl(apiService: api),
+        ),
+
+        // ── Rating module ─────────────────────────────────────────────────
+        // RatingRepository is global so its cache persists across chapter
+        // switches and screen re-visits.
+        Provider<RatingApiService>(create: (_) => RatingApiService()),
+
+        ProxyProvider<RatingApiService, RatingRepository>(
+          create: (ctx) => RatingRepositoryImpl(
+            apiService: ctx.read<RatingApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? RatingRepositoryImpl(apiService: api),
+        ),
+
+        // ── Signed Cookie module ──────────────────────────────────────────
+        // Global singleton — cache persists for the cookie's validity window.
+        Provider<SignedCookieApiService>(
+          create: (_) => SignedCookieApiService(),
+        ),
+
+        ProxyProvider<SignedCookieApiService, SignedCookieRepository>(
+          create: (ctx) => SignedCookieRepositoryImpl(
+            apiService: ctx.read<SignedCookieApiService>(),
+          ),
+          update: (_, api, previous) =>
+              previous ?? SignedCookieRepositoryImpl(apiService: api),
         ),
       ],
       child: const MyApp(),

@@ -26,6 +26,9 @@ dependencies:
   # Cached network images with placeholder and error support
   cached_network_image: ^3.3.1
 
+  # SVG rendering (video.svg and other vector assets)
+  flutter_svg: ^2.0.10
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
