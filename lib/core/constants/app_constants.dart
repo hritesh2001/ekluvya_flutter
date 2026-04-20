@@ -12,6 +12,9 @@ abstract class AppConstants {
   static const String mediaApiBaseUrl =
       'https://stg-ottapi.ekluvya.guru/mediaview/api';
 
+  static const String searchBaseUrl =
+      'https://stg-ottapi.ekluvya.guru/search/api/v1';
+
   /// CloudFront CDN base URL for banner assets.
   /// Final URL = bannerImageBaseUrl + bannerImg field from API.
   static const String bannerImageBaseUrl =

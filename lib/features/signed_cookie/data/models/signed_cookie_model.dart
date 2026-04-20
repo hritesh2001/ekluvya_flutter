@@ -14,28 +14,37 @@ class SignedCookieModel {
     required this.expires,
   });
 
-  /// True when the cookies are still within their validity window.
-  bool get isValid => DateTime.now().isBefore(expires);
+  /// True when the API returned all mandatory CloudFront cookie values.
+  bool get hasRequiredCookies =>
+      keyPairId.trim().isNotEmpty &&
+      policy.trim().isNotEmpty &&
+      signature.trim().isNotEmpty;
 
-  /// Ready-to-use map of CloudFront cookie name → value.
-  Map<String, String> get cookieMap => {
-        'CloudFront-Key-Pair-Id': keyPairId,
-        'CloudFront-Policy': policy,
-        'CloudFront-Signature': signature,
-      };
+  /// True when the cookies are still within their validity window.
+  bool get isValid => hasRequiredCookies && DateTime.now().isBefore(expires);
+
+  /// Ready-to-use map of CloudFront cookie name to value.
+  Map<String, String> get cookieMap => hasRequiredCookies
+      ? {
+          'CloudFront-Key-Pair-Id': keyPairId,
+          'CloudFront-Policy': policy,
+          'CloudFront-Signature': signature,
+        }
+      : const {};
 
   /// Single `Cookie` header string for HTTP requests.
   String get cookieHeader => cookieMap.entries
-      .map((e) => '${e.key}=${e.value}')
+      .map((entry) => '${entry.key}=${entry.value}')
       .join('; ');
 
   factory SignedCookieModel.fromJson(Map<String, dynamic> json) {
-    final cookies = json['cookies'] as Map<String, dynamic>? ?? {};
+    final cookies = json['cookies'] as Map<String, dynamic>? ?? const {};
     return SignedCookieModel(
-      keyPairId: cookies['CloudFront-Key-Pair-Id']?.toString() ?? '',
-      policy: cookies['CloudFront-Policy']?.toString() ?? '',
-      signature: cookies['CloudFront-Signature']?.toString() ?? '',
-      expires: DateTime.tryParse(json['expires']?.toString() ?? '') ??
+      keyPairId: cookies['CloudFront-Key-Pair-Id']?.toString().trim() ?? '',
+      policy: cookies['CloudFront-Policy']?.toString().trim() ?? '',
+      signature: cookies['CloudFront-Signature']?.toString().trim() ?? '',
+      expires:
+          DateTime.tryParse(json['expires']?.toString() ?? '') ??
           DateTime.now().add(const Duration(hours: 1)),
     );
   }

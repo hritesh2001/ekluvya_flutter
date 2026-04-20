@@ -1,3 +1,4 @@
+import '../../../../core/constants/app_constants.dart';
 import 'course_model.dart';
 
 /// A top-level category (e.g. ACADEMICS, LIFE SKILLS) that
@@ -19,6 +20,9 @@ class CategoryModel {
   final String title;
   final int order;
 
+  /// Relative path from the API — use [fullImageUrl] for display.
+  final String profilePicture;
+
   /// Courses returned for this page (limited by inside_limit).
   final List<CourseModel> courses;
 
@@ -33,6 +37,7 @@ class CategoryModel {
     required this.id,
     required this.title,
     required this.order,
+    required this.profilePicture,
     required this.courses,
     required this.totalCourses,
     this.totalVideos,
@@ -51,6 +56,7 @@ class CategoryModel {
       id: json['_id']?.toString() ?? '',
       title: json['title']?.toString() ?? '',
       order: (json['order'] as num?)?.toInt() ?? 0,
+      profilePicture: json['profile_picture']?.toString() ?? '',
       courses: courses,
       // 'total' is the server-side count of all courses in this category
       totalCourses: (json['total'] as num?)?.toInt() ?? courses.length,
@@ -58,6 +64,11 @@ class CategoryModel {
           (json['total_videos'] as num?)?.toInt(),
     );
   }
+
+  /// Full CloudFront image URL for the collection background.
+  String get fullImageUrl => profilePicture.isNotEmpty
+      ? '${AppConstants.thumbnailCdnBaseUrl}$profilePicture'
+      : '';
 
   bool get hasCourses => courses.isNotEmpty;
 }

@@ -2,21 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/utils/logger.dart';
 import '../../../../features/badge/domain/repositories/badge_repository.dart';
 import '../../../../features/badge/presentation/viewmodel/badge_viewmodel.dart';
 import '../../../../features/channel/data/models/channel_model.dart';
+import '../../../../features/channel/data/models/video_item_model.dart';
 import '../../../../features/channel/domain/repositories/channel_repository.dart';
+import '../../../../features/channel/presentation/view/channel_videos_screen.dart';
 import '../../../../features/channel/presentation/viewmodel/channel_viewmodel.dart';
 import '../../../../features/rating/domain/repositories/rating_repository.dart';
 import '../../../../features/rating/presentation/viewmodel/rating_viewmodel.dart';
 import '../../../../features/signed_cookie/domain/repositories/signed_cookie_repository.dart';
 import '../../../../features/signed_cookie/presentation/viewmodel/signed_cookie_viewmodel.dart';
+import '../../../../features/video_player/data/remote/watch_api_service.dart';
+import '../../../../features/video_player/presentation/view/video_player_screen.dart';
 import '../../domain/repositories/class_subject_repository.dart';
 import '../viewmodel/class_subject_viewmodel.dart';
 import 'chapter_filter_widget.dart';
 import 'class_selector_widget.dart';
 import 'content_section_widget.dart';
+import '../../../../features/search/presentation/view/search_screen.dart';
+import '../../../../features/explore/presentation/view/explore_screen.dart';
 import 'subject_chips_widget.dart';
+import '../../../../../widgets/custom_bottom_nav_bar.dart';
 
 // ── Brand gradient — exactly matches the EKLUVYA logo colours ─────────────────
 //   Deep orange (#FF5722) on the left → brand pink (#E91E63) on the right.
@@ -35,7 +43,7 @@ const Color _gradPink   = Color(0xFFE91E63);
 /// Below the gradient (white surface):
 ///   Row 4 — Chapters  [BASIC MATHEMATICS ▼]
 ///   Rows 5+ — Scrollable content sections
-class CourseDetailScreen extends StatelessWidget {
+class CourseDetailScreen extends StatefulWidget {
   const CourseDetailScreen({
     super.key,
     required this.courseId,
@@ -48,16 +56,52 @@ class CourseDetailScreen extends StatelessWidget {
   final String courseImageUrl;
 
   @override
+  State<CourseDetailScreen> createState() => _CourseDetailScreenState();
+}
+
+class _CourseDetailScreenState extends State<CourseDetailScreen> {
+  int _navIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Enforce portrait + visible system UI when this screen first mounts.
+    SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ModalRoute.isCurrent becomes true when a route on top of this one pops
+    // (e.g. video player closes). Re-enforce portrait + edgeToEdge here so
+    // that even if _restoreSystemChrome() in the video player raced with the
+    // route transition, this screen always ends up in the correct state.
+    if (ModalRoute.of(context)?.isCurrent == true) {
+      SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      // Post-frame re-enforcement: the platform-channel response for
+      // setEnabledSystemUIMode can arrive one frame after the route
+      // becomes current.  Calling it again + triggering setState ensures
+      // the Scaffold re-reads MediaQuery.padding.bottom and repositions
+      // the bottom nav bar as soon as the system nav bar reappears.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        setState(() {});
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Both ViewModels are scoped to this screen.
-    // ChannelViewModel shares the global ChannelRepository (cached).
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(
           create: (ctx) => ClassSubjectViewModel(
             repository: ctx.read<ClassSubjectRepository>(),
-            courseId: courseId,
-            courseTitle: courseTitle,
+            courseId: widget.courseId,
+            courseTitle: widget.courseTitle,
           )..initialize(),
         ),
         ChangeNotifierProvider(
@@ -81,71 +125,215 @@ class CourseDetailScreen extends StatelessWidget {
           ),
         ),
       ],
-      child: _CourseDetailBody(courseTitle: courseTitle),
+      child: _CourseDetailShell(
+        courseTitle: widget.courseTitle,
+        navIndex: _navIndex,
+        onNavTapped: (i) => setState(() => _navIndex = i),
+      ),
     );
   }
 }
 
-// ── Body ──────────────────────────────────────────────────────────────────────
+// ── Shell — holds navbar + tab pages ─────────────────────────────────────────
 
-class _CourseDetailBody extends StatelessWidget {
-  const _CourseDetailBody({required this.courseTitle});
+class _CourseDetailShell extends StatefulWidget {
+  const _CourseDetailShell({
+    required this.courseTitle,
+    required this.navIndex,
+    required this.onNavTapped,
+  });
+
   final String courseTitle;
+  final int navIndex;
+  final ValueChanged<int> onNavTapped;
+
+  @override
+  State<_CourseDetailShell> createState() => _CourseDetailShellState();
+}
+
+class _CourseDetailShellState extends State<_CourseDetailShell>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  late final AnimationController _drawerCtrl;
+  late final Animation<Offset> _slideAnim;
+  late final Animation<double>  _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _drawerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    // Drawer slides in from the left.
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(-1, 0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _drawerCtrl, curve: Curves.easeOutCubic));
+    // Overlay fades from transparent to 55 % black.
+    _fadeAnim = Tween<double>(begin: 0, end: 0.55)
+        .animate(CurvedAnimation(parent: _drawerCtrl, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _drawerCtrl.dispose();
+    super.dispose();
+  }
+
+  // Fired the instant the window insets change — e.g. when the system
+  // navigation bar reappears after exiting the immersive video player.
+  // setState forces Scaffold to re-read MediaQuery.padding.bottom and
+  // reposition the bottom nav bar before the user sees the next frame.
+  @override
+  void didChangeMetrics() {
+    if (mounted) setState(() {});
+  }
+
+  void _openDrawer()  => _drawerCtrl.forward();
+  void _closeDrawer() => _drawerCtrl.reverse();
 
   @override
   Widget build(BuildContext context) {
-    final topPad = MediaQuery.paddingOf(context).top;
-
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light
-          .copyWith(statusBarColor: Colors.transparent),
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── Rows 1-3: gradient header band ───────────────────────
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [_gradPink, _gradOrange],
+    return Stack(
+      children: [
+        // ── Main screen ──────────────────────────────────────────────
+        AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle.light
+              .copyWith(statusBarColor: Colors.transparent),
+          child: Scaffold(
+            backgroundColor: Colors.white,
+            extendBody: true,
+            bottomNavigationBar: CustomBottomNavBar(
+              selectedIndex: widget.navIndex,
+              onItemTapped: widget.onNavTapped,
+              onHomeTapped: () => widget.onNavTapped(0),
+            ),
+            body: IndexedStack(
+              index: widget.navIndex,
+              children: [
+                _CourseContent(
+                  courseTitle: widget.courseTitle,
+                  onMenuTap: _openDrawer,
+                  drawerAnim: _drawerCtrl,
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Status-bar inset
-                  SizedBox(height: topPad),
-
-                  // Row 1 — App branding
-                  _BrandRow(),
-
-                  // Row 2 — Course title + class selector
-                  _CourseTitleRow(courseTitle: courseTitle),
-
-                  const SizedBox(height: 2),
-
-                  // Row 3 — Subject chips
-                  const SubjectChipsWidget(),
-
-                  const SizedBox(height: 10),
-                ],
-              ),
+                const SearchScreen(),
+                const ExploreScreen(),
+                const _NavPlaceholder(icon: Icons.bookmark_border_rounded, label: 'Bookmarks'),
+              ],
             ),
-
-            // ── Row 4: chapter filter (white surface) ────────────────
-            const ColoredBox(
-              color: Colors.white,
-              child: _ChapterFilterRow(),
-            ),
-
-            // ── Rows 5+: scrollable content ───────────────────────────
-            const Expanded(child: _ContentScrollView()),
-          ],
+          ),
         ),
+
+        // ── Semi-transparent dim overlay ─────────────────────────────
+        // Rendered only while the drawer is visible so there is zero
+        // overhead when it is closed.
+        AnimatedBuilder(
+          animation: _drawerCtrl,
+          builder: (_, _) {
+            if (_drawerCtrl.isDismissed) return const SizedBox.shrink();
+            return GestureDetector(
+              onTap: _closeDrawer,
+              child: ColoredBox(
+                color: Color.fromRGBO(0, 0, 0, _fadeAnim.value),
+                child: const SizedBox.expand(),
+              ),
+            );
+          },
+        ),
+
+        // ── Sliding drawer panel ─────────────────────────────────────
+        SlideTransition(
+          position: _slideAnim,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: _DrawerPanel(onClose: _closeDrawer),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Course content tab ────────────────────────────────────────────────────────
+
+class _CourseContent extends StatelessWidget {
+  const _CourseContent({
+    required this.courseTitle,
+    required this.onMenuTap,
+    required this.drawerAnim,
+  });
+
+  final String courseTitle;
+  final VoidCallback onMenuTap;
+  final Animation<double> drawerAnim;
+
+  @override
+  Widget build(BuildContext context) {
+    // Read directly so this widget re-renders with the live value whenever
+    // MediaQuery updates (e.g. after orientation restores from landscape).
+    final topPad = MediaQuery.paddingOf(context).top;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Rows 1-3: gradient header band ─────────────────────────
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [_gradPink, _gradOrange],
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(height: topPad),
+              _BrandRow(onMenuTap: onMenuTap, drawerAnim: drawerAnim),
+              _CourseTitleRow(courseTitle: courseTitle),
+              const SizedBox(height: 2),
+              const SubjectChipsWidget(),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+
+        // ── Row 4: chapter filter ───────────────────────────────────
+        const ColoredBox(
+          color: Colors.white,
+          child: _ChapterFilterRow(),
+        ),
+
+        // ── Rows 5+: partner/channel sections ──────────────────────
+        const Expanded(child: _ContentScrollView()),
+      ],
+    );
+  }
+}
+
+// ── Placeholder tab ───────────────────────────────────────────────────────────
+
+class _NavPlaceholder extends StatelessWidget {
+  const _NavPlaceholder({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 56, color: const Color(0xFFCCCCCC)),
+          const SizedBox(height: 12),
+          Text(
+            '$label coming soon',
+            style: const TextStyle(fontSize: 15, color: Color(0xFF9E9E9E)),
+          ),
+        ],
       ),
     );
   }
@@ -158,16 +346,35 @@ class _CourseDetailBody extends StatelessWidget {
 /// The icon is rendered with a white colour filter so it reads on the gradient.
 /// "EKLUVYA" is white with wide letter-spacing, matching the design.
 class _BrandRow extends StatelessWidget {
+  const _BrandRow({required this.onMenuTap, required this.drawerAnim});
+  final VoidCallback onMenuTap;
+  final Animation<double> drawerAnim;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          // ── Hamburger menu ─────────────────────────────────────────
+          // ── Menu icon — hamburger when closed, X when open ──────────
           GestureDetector(
-            onTap: () => Navigator.of(context).maybePop(),
-            child: const Icon(Icons.menu_rounded, color: Colors.white, size: 24),
+            onTap: onMenuTap,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: AnimatedBuilder(
+                animation: drawerAnim,
+                builder: (_, _) => drawerAnim.value > 0.5
+                    ? const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 24)
+                    : Image.asset(
+                        'assets/icons/hamburger-menu.png',
+                        width: 24,
+                        height: 24,
+                        color: Colors.white,
+                      ),
+              ),
+            ),
           ),
 
           // ── Centred logo + wordmark ────────────────────────────────
@@ -282,11 +489,66 @@ class _ContentScrollView extends StatefulWidget {
 }
 
 class _ContentScrollViewState extends State<_ContentScrollView> {
-  // Tracks the last params passed to ChannelViewModel.load() to avoid
-  // redundant calls when unrelated parts of ClassSubjectViewModel notify.
+  static const _tag = 'CourseDetailScreen';
+  final _watchApi = WatchApiService();
+  String? _loadingId;
+
   String? _loadedClassId;
   String? _loadedSubjectId;
   String? _loadedChapterId;
+
+  Future<void> _onItemTap(ContentItemData item) async {
+    AppLogger.info(_tag,
+        'TAP id=${item.id} slug="${item.slug}" hls="${item.hlsUrl}"');
+    if (_loadingId != null) return;
+
+    final cookieStr = context.read<SignedCookieViewModel>().cookieHeader;
+    final cookieHeaders = cookieStr.isNotEmpty
+        ? <String, String>{'Cookie': cookieStr}
+        : <String, String>{};
+
+    // Prefer fetching fresh episode data via slug (validates access + fresh URL).
+    if (item.slug.isNotEmpty) {
+      setState(() => _loadingId = item.id);
+      try {
+        final episode = await _watchApi.fetchEpisode(item.slug);
+        if (!mounted) return;
+        await Navigator.of(context)
+            .push(VideoPlayerScreen.route(episode, headers: cookieHeaders));
+        return;
+      } catch (e) {
+        AppLogger.error(_tag, 'Episode fetch failed, trying direct play: $e');
+      } finally {
+        if (mounted) setState(() => _loadingId = null);
+      }
+    }
+
+    // Fallback: play directly with the HLS URL from the channel-list.
+    if (item.hlsUrl.isNotEmpty) {
+      if (!mounted) return;
+      final video = VideoItemModel(
+        id: item.id,
+        title: item.title,
+        description: '',
+        hlsUrl: item.hlsUrl,
+        durationSeconds: 0,
+        viewCount: 0,
+        episodeIndex: 0,
+        thumbnailUrl: item.thumbnailUrl,
+        slug: item.slug,
+        seriesSlug: '',
+        isSubscription: false,
+        isUserSubscribed: false,
+        isYellowStrip: false,
+        monetization: 0,
+      );
+      await Navigator.of(context)
+          .push(VideoPlayerScreen.route(video, headers: cookieHeaders));
+      return;
+    }
+
+    AppLogger.warning(_tag, 'No playable URL for item ${item.id}');
+  }
 
   /// Converts a [ChannelModel] → [ContentSectionData], enriched with
   /// badge (Most Loved / Most Watched) and rating data.
@@ -297,6 +559,8 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
   ) {
     final items = ch.videos.map((v) => ContentItemData(
       id: v.id,
+      slug: v.slug,
+      hlsUrl: v.hlsUrl,
       title: v.title,
       thumbnailUrl: v.thumbnailUrl,
     )).toList();
@@ -381,6 +645,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
           ChannelLoadState.loaded => _ChannelList(
               channels: channelVM.channels,
               toSection: (ch, _) => _toSection(ch, badgeVM, ratingVM),
+              onItemTap: _onItemTap,
             ),
         };
       },
@@ -395,10 +660,12 @@ class _ChannelList extends StatelessWidget {
   const _ChannelList({
     required this.channels,
     required this.toSection,
+    this.onItemTap,
   });
 
   final List<ChannelModel> channels;
   final ContentSectionData Function(ChannelModel, int) toSection;
+  final void Function(ContentItemData)? onItemTap;
 
   @override
   Widget build(BuildContext context) {
@@ -410,7 +677,19 @@ class _ChannelList extends StatelessWidget {
           SliverToBoxAdapter(
             child: ContentSectionWidget(
               section: toSection(channels[i], i),
-              onViewAll: () {}, // TODO: navigate to full channel view
+              onItemTap: onItemTap,
+              onViewAll: () {
+                final hdrs =
+                    context.read<SignedCookieViewModel>().cookieMap;
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ChannelVideosScreen(
+                      channel: channels[i],
+                      headers: hdrs,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
@@ -588,6 +867,275 @@ class _ErrorState extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Sliding drawer panel ──────────────────────────────────────────────────────
+
+const Color _drawerAvatarBlue = Color(0xFF4A90E2);
+const Color _drawerGold       = Color(0xFFD4AF37);
+const Color _drawerDivider    = Color(0xFFE0E0E0);
+const Color _drawerTitleColor = Color(0xFF333333);
+const Color _drawerSubColor   = Color(0xFF9E9E9E);
+const Color _drawerIconColor  = Color(0xFF9E9E9E);
+
+class _DrawerPanel extends StatelessWidget {
+  const _DrawerPanel({required this.onClose});
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final topPad    = MediaQuery.paddingOf(context).top;
+    final bottomPad = MediaQuery.paddingOf(context).bottom;
+    final drawerW   = (MediaQuery.sizeOf(context).width * 0.83).clamp(0.0, 320.0);
+
+    return Material(
+      elevation: 12,
+      shadowColor: Colors.black54,
+      borderRadius: const BorderRadius.only(
+        topRight: Radius.circular(12),
+        bottomRight: Radius.circular(12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: drawerW,
+        height: double.infinity,
+        child: ColoredBox(
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Gradient header ──────────────────────────────────────
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [Color(0xFFFF2D55), Color(0xFFFF7A00)],
+                  ),
+                ),
+                padding: EdgeInsets.fromLTRB(16, topPad + 16, 16, 20),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Blue avatar circle
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _drawerAvatarBlue,
+                      ),
+                      child: const Icon(
+                        Icons.person_rounded,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Sign In',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            'For better experience',
+                            style: TextStyle(
+                              color: Colors.white.withAlpha(179),
+                              fontSize: 13,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Subscribe button ─────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: () {},
+                    icon: const Icon(
+                      Icons.workspace_premium_rounded,
+                      color: _drawerGold,
+                      size: 20,
+                    ),
+                    label: const Text(
+                      'SUBSCRIBE',
+                      style: TextStyle(
+                        color: _drawerGold,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.4,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // ── OTHERS section label ─────────────────────────────────
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 22, 20, 6),
+                child: Text(
+                  'OTHERS',
+                  style: TextStyle(
+                    color: _drawerSubColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.3,
+                  ),
+                ),
+              ),
+
+              // ── Menu items with dividers ─────────────────────────────
+              _DrawerItem(
+                icon: Icons.settings_outlined,
+                title: 'App Settings',
+                subtitle: 'Take control and customize your app',
+                onTap: onClose,
+              ),
+              const _DrawerDivider(),
+              _DrawerItem(
+                icon: Icons.star_border_rounded,
+                title: 'Rate us on Play Store',
+                subtitle: 'Let us know your rating for us',
+                onTap: onClose,
+              ),
+              const _DrawerDivider(),
+              _DrawerItem(
+                icon: Icons.devices_outlined,
+                title: 'Manage Devices',
+                subtitle: 'The devices and browsers you signed in are listed here',
+                onTap: onClose,
+              ),
+              const _DrawerDivider(),
+              _DrawerItem(
+                icon: Icons.description_outlined,
+                title: 'Privacy Policy',
+                subtitle: 'Our terms of use & Agreements',
+                onTap: onClose,
+              ),
+
+              const Spacer(),
+
+              // ── Version footer — centered ────────────────────────────
+              Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPad + 20),
+                child: const Text(
+                  'Version – ST 1.10.0(10)',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _drawerSubColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerDivider extends StatelessWidget {
+  const _DrawerDivider();
+
+  @override
+  Widget build(BuildContext context) => const Divider(
+        height: 1,
+        thickness: 1,
+        color: _drawerDivider,
+        indent: 20,
+        endIndent: 20,
+      );
+}
+
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: const Color(0x14000000),
+      highlightColor: const Color(0x0A000000),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(icon, color: _drawerIconColor, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: _drawerTitleColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: _drawerSubColor,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

@@ -10,12 +10,16 @@ class ContentItemData {
   const ContentItemData({
     required this.id,
     required this.title,
+    this.slug = '',
+    this.hlsUrl = '',
     this.thumbnailUrl = '',
     this.rating,
   });
 
   final String id;
   final String title;
+  final String slug;
+  final String hlsUrl;
   final String thumbnailUrl;
   final double? rating;
 }
@@ -49,10 +53,12 @@ class ContentSectionWidget extends StatelessWidget {
     super.key,
     required this.section,
     this.onViewAll,
+    this.onItemTap,
   });
 
   final ContentSectionData section;
   final VoidCallback? onViewAll;
+  final void Function(ContentItemData)? onItemTap;
 
   static const double _minCardWidth = 160.0;
   static const double _maxCardWidth = 220.0;
@@ -84,11 +90,19 @@ class ContentSectionWidget extends StatelessWidget {
                 separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (_, index) {
                   final item = section.items[index];
-                  return ContentCardWidget(
-                    title: item.title,
-                    thumbnailUrl: item.thumbnailUrl,
-                    cardWidth: cardW,
-                    rating: item.rating,
+                  return GestureDetector(
+                    // key forces widget recreation when item identity changes,
+                    // preventing CachedNetworkImage from crossfading a cached
+                    // thumbnail from the previous item at the same list index.
+                    key: ValueKey(item.id),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onItemTap != null ? () => onItemTap!(item) : null,
+                    child: ContentCardWidget(
+                      title: item.title,
+                      thumbnailUrl: item.thumbnailUrl,
+                      cardWidth: cardW,
+                      rating: item.rating,
+                    ),
                   );
                 },
               ),

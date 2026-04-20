@@ -8,12 +8,8 @@ import '../features/course/presentation/view/course_section_widget.dart';
 import '../features/course/presentation/view/course_shimmer_widget.dart';
 import '../features/course/presentation/viewmodel/course_viewmodel.dart';
 
-/// Landing screen.
-///
-/// Constraints:
-///   - No AppBar, no navigation bar, no icons in the header.
-///   - Screen starts directly with the banner.
-///   - [AnnotatedRegion] controls status-bar icon brightness without an AppBar.
+/// Landing screen — banners + course category cards.
+/// No bottom navigation here; the navbar lives on CourseDetailScreen.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -22,107 +18,127 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final ScrollController _scrollCtrl = ScrollController();
+  final Map<String, GlobalKey> _categoryKeys = {};
+  CourseViewModel? _vm;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<CourseViewModel>().loadCategories();
+      if (!mounted) return;
+      _vm = context.read<CourseViewModel>();
+      _vm!.addListener(_onVmChanged);
+      if (!_vm!.hasData && !_vm!.isLoading) _vm!.loadCategories();
     });
   }
 
-  // ── Content states ────────────────────────────────────────────────────────
-
-  Widget _buildShimmer() {
-    return Column(
-      children: List.generate(
-        2,
-        (_) => const Padding(
-          padding: EdgeInsets.only(bottom: 20),
-          child: CourseShimmerWidget(),
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    _vm?.removeListener(_onVmChanged);
+    _scrollCtrl.dispose();
+    super.dispose();
   }
 
-  Widget _buildError(CourseViewModel vm, AppColors colors) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.wifi_off_rounded, size: 48, color: colors.brand),
-            const SizedBox(height: 12),
-            Text(
-              vm.errorMessage ?? 'Failed to load courses',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: colors.metaText),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: vm.retry,
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Retry'),
-              style: FilledButton.styleFrom(
-                backgroundColor: colors.brand,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+  void _onVmChanged() {
+    final id = _vm?.pendingScrollCategoryId;
+    if (id == null) return;
+    _vm!.clearPendingScroll();
+    // Schedule scroll for the frame after HomeScreen becomes current again.
+    // Because ExploreScreen calls selectCategory() before Navigator.pop(),
+    // this callback fires while HomeScreen is still behind the outgoing route.
+    // The scroll silently completes during the pop animation so HomeScreen
+    // appears at the correct position with no visible jump.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final key = _categoryKeys[id];
+      if (key?.currentContext != null) {
+        Scrollable.ensureVisible(
+          key!.currentContext!,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          alignment: 0.0,
+        );
+      }
+    });
+  }
+
+  Widget _buildShimmer() => Column(
+        children: List.generate(
+          2,
+          (_) => const Padding(
+            padding: EdgeInsets.only(bottom: 20),
+            child: CourseShimmerWidget(),
+          ),
+        ),
+      );
+
+  Widget _buildError(CourseViewModel vm, AppColors colors) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off_rounded, size: 48, color: colors.brand),
+              const SizedBox(height: 12),
+              Text(
+                vm.errorMessage ?? 'Failed to load courses',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: colors.metaText),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: vm.retry,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Retry'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colors.brand,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _buildEmpty(AppColors colors) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48),
-      child: Center(
-        child: Text(
-          'No courses available',
-          style: TextStyle(color: colors.metaText, fontSize: 14),
+  Widget _buildEmpty(AppColors colors) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Center(
+          child: Text(
+            'No courses available',
+            style: TextStyle(color: colors.metaText, fontSize: 14),
+          ),
         ),
-      ),
-    );
-  }
-
-  // ── Build ─────────────────────────────────────────────────────────────────
+      );
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).extension<AppColors>() ?? AppColors.light;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // AnnotatedRegion is the correct way to control the status-bar style
-    // when there is no AppBar to carry a SystemUiOverlayStyle.
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
           .copyWith(statusBarColor: Colors.transparent),
       child: Scaffold(
-        // No AppBar — screen starts directly with the banner.
         body: SafeArea(
           child: RefreshIndicator(
             color: colors.brand,
-            onRefresh: () async {
-              await context.read<CourseViewModel>().loadCategories();
-            },
+            onRefresh: () async =>
+                context.read<CourseViewModel>().loadCategories(),
             child: CustomScrollView(
+              controller: _scrollCtrl,
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
-                // ── Banner Carousel ───────────────────────────────────
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
                     child: BannerCarouselWidget(),
                   ),
                 ),
-
                 const SliverToBoxAdapter(child: SizedBox(height: 20)),
-
-                // ── Course Categories ─────────────────────────────────
                 SliverToBoxAdapter(
                   child: Consumer<CourseViewModel>(
                     builder: (context, vm, _) {
@@ -132,8 +148,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (vm.hasData) {
                         return Column(
                           children: [
-                            for (final category in vm.categories) ...[
-                              CourseSectionWidget(category: category),
+                            for (final cat in vm.categories) ...[
+                              CourseSectionWidget(
+                                key: _categoryKeys.putIfAbsent(
+                                    cat.id, GlobalKey.new),
+                                category: cat,
+                              ),
                               const SizedBox(height: 20),
                             ],
                           ],
@@ -143,7 +163,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
-
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
               ],
             ),

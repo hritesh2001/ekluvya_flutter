@@ -19,6 +19,7 @@ class CourseViewModel extends ChangeNotifier {
   CourseState _state = CourseState.initial;
   List<CategoryModel> _categories = [];
   String? _errorMessage;
+  String? _pendingScrollCategoryId;
 
   CourseViewModel(this._repository);
 
@@ -27,6 +28,7 @@ class CourseViewModel extends ChangeNotifier {
   CourseState get state => _state;
   List<CategoryModel> get categories => List.unmodifiable(_categories);
   String? get errorMessage => _errorMessage;
+  String? get pendingScrollCategoryId => _pendingScrollCategoryId;
 
   bool get isLoading => _state == CourseState.loading;
   bool get hasError => _state == CourseState.error;
@@ -73,4 +75,15 @@ class CourseViewModel extends ChangeNotifier {
 
   /// Wired to the Retry button in the error UI.
   void retry() => loadCategories();
+
+  /// Called by ExploreScreen before popping back to HomeScreen.
+  /// HomeScreen listens, scrolls to the matching category section, then clears.
+  void selectCategory(String id) {
+    _pendingScrollCategoryId = id;
+    notifyListeners();
+  }
+
+  void clearPendingScroll() {
+    _pendingScrollCategoryId = null;
+  }
 }

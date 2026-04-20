@@ -29,6 +29,15 @@ dependencies:
   # SVG rendering (video.svg and other vector assets)
   flutter_svg: ^2.0.10
 
+  # Open banner URLs in the device browser
+  url_launcher: ^6.3.0
+
+  # OTT video player — HLS, adaptive bitrate, caching, resume, speed control
+  better_player_enhanced: ^1.0.2
+
+  # Keep screen awake during video playback
+  wakelock_plus: ^1.2.8
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

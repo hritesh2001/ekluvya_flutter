@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../../core/theme/app_theme.dart';
 import '../../../../../core/utils/logger.dart';
@@ -182,8 +183,13 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
 
   Widget _buildBannerPage(BannerModel banner, double height, AppColors colors) {
     return GestureDetector(
-      onTap: () {
-        // TODO: wire deep-link navigation when the course/video module is ready
+      onTap: () async {
+        if (!banner.hasLink) return;
+        final uri = Uri.tryParse(banner.bannerUrl);
+        if (uri == null) return;
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
       },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
