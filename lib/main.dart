@@ -28,6 +28,12 @@ import 'features/course/data/remote/course_api_service.dart';
 import 'features/course/data/repository/course_repository_impl.dart';
 import 'features/course/domain/repositories/course_repository.dart';
 import 'features/course/presentation/viewmodel/course_viewmodel.dart';
+import 'features/auth/data/remote/session_api_service.dart';
+import 'features/auth/presentation/view/device_restriction_screen.dart';
+import 'features/auth/presentation/viewmodel/session_viewmodel.dart';
+import 'features/video_access/data/repositories/video_access_repository_impl.dart';
+import 'features/video_access/domain/repositories/video_access_repository.dart';
+import 'features/video_access/domain/usecases/check_video_access_usecase.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/otp_screen.dart';
@@ -76,6 +82,23 @@ class _AppProviders extends StatelessWidget {
         // Single ApiService instance shared by all ViewModels
         Provider<ApiService>(create: (_) => ApiService()),
 
+        // ── Session (auth + subscription + device) ───────────────────
+        Provider<SessionApiService>(create: (_) => SessionApiService()),
+
+        ChangeNotifierProxyProvider2<ApiService, SessionApiService,
+            SessionViewModel>(
+          create: (ctx) => SessionViewModel(
+            apiService: ctx.read<ApiService>(),
+            sessionApiService: ctx.read<SessionApiService>(),
+          ),
+          update: (_, api, sessionApi, previous) =>
+              previous ??
+              SessionViewModel(
+                apiService: api,
+                sessionApiService: sessionApi,
+              ),
+        ),
+
         ChangeNotifierProxyProvider<ApiService, AuthViewModel>(
           create: (ctx) => AuthViewModel(ctx.read<ApiService>()),
           update: (_, api, previous) => previous ?? AuthViewModel(api),
@@ -84,6 +107,20 @@ class _AppProviders extends StatelessWidget {
         ChangeNotifierProxyProvider<ApiService, RegistrationViewModel>(
           create: (ctx) => RegistrationViewModel(ctx.read<ApiService>()),
           update: (_, api, previous) => previous ?? RegistrationViewModel(api),
+        ),
+
+        // ── Video access control (domain + data) ────────────────────────
+        // Stateless singleton — pure function, no ChangeNotifier needed.
+        Provider<VideoAccessRepository>(
+          create: (_) => const VideoAccessRepositoryImpl(),
+        ),
+
+        ProxyProvider<VideoAccessRepository, CheckVideoAccessUseCase>(
+          create: (ctx) => CheckVideoAccessUseCase(
+            ctx.read<VideoAccessRepository>(),
+          ),
+          update: (_, repo, previous) =>
+              previous ?? CheckVideoAccessUseCase(repo),
         ),
 
         // ── Banner module ────────────────────────────────────────────────
@@ -209,6 +246,8 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegistrationScreen(),
         '/home': (context) => const HomeScreen(),
         '/student-password': (context) => const StudentPasswordScreen(),
+        DeviceRestrictionScreen.routeName: (context) =>
+            const DeviceRestrictionScreen(),
       },
       // Widget-level error boundary — shows a friendly UI instead of a red screen
       builder: (context, child) {

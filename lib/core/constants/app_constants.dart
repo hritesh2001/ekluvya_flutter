@@ -7,6 +7,8 @@ abstract class AppConstants {
       'https://stg-ottapi.ekluvya.guru/users/api/v1';
   static const String mediaBaseUrl =
       'https://stg-ottapi.ekluvya.guru/mediaview/api/v1';
+  static const String userActionsBaseUrl =
+      'https://stg-ottapi.ekluvya.guru/useractions/api/v1';
 
   /// Base for non-versioned mediaview endpoints (e.g. get-signed-cookies).
   static const String mediaApiBaseUrl =

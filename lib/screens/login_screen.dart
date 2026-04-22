@@ -1,11 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 
 import '../viewmodels/auth_viewmodel.dart';
+import '../widgets/app_toast.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -49,6 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (success) {
+        AppToast.show(context, message: 'You have successfully logged in');
         Navigator.pushReplacementNamed(context, '/home');
       } else {
         _showSnack(authVM.errorMessage ?? 'Google login failed');
@@ -163,13 +162,10 @@ class _LoginBody extends StatelessWidget {
               alignment: Alignment.topRight,
               child: IconButton(
                 icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () {
-                  if (Platform.isAndroid) {
-                    SystemNavigator.pop();
-                  } else {
-                    exit(0);
-                  }
-                },
+                onPressed: () => Navigator.of(context).popUntil(
+                  (route) =>
+                      route.settings.name == '/home' || route.isFirst,
+                ),
               ),
             ),
 

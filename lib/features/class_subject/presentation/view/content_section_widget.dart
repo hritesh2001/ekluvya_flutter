@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../features/badge/data/models/badge_model.dart';
+import '../../../../features/video_access/domain/entities/video_access_status.dart';
 import 'content_card_widget.dart';
 
 // ── Data models ───────────────────────────────────────────────────────────────
@@ -14,6 +15,10 @@ class ContentItemData {
     this.hlsUrl = '',
     this.thumbnailUrl = '',
     this.rating,
+    this.episodeIndex = 0,
+    // Default to `free` so any card that omits access status is never
+    // accidentally shown as locked.
+    this.accessStatus = VideoAccessStatus.free,
   });
 
   final String id;
@@ -22,6 +27,12 @@ class ContentItemData {
   final String hlsUrl;
   final String thumbnailUrl;
   final double? rating;
+  final int episodeIndex;
+
+  /// Drives the lock overlay and FREE badge on the card.
+  /// Computed by [CheckVideoAccessUseCase] in the screen layer and stored
+  /// here so the card widget itself is a pure presenter — no state reads.
+  final VideoAccessStatus accessStatus;
 }
 
 class ContentSectionData {
@@ -89,9 +100,13 @@ class ContentSectionWidget extends StatelessWidget {
                 itemCount: section.items.length,
                 separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (_, index) {
+                  // Guard: never crash on out-of-bounds (defensive, belt+braces).
+                  if (index < 0 || index >= section.items.length) {
+                    return const SizedBox.shrink();
+                  }
                   final item = section.items[index];
                   return GestureDetector(
-                    // key forces widget recreation when item identity changes,
+                    // ValueKey forces widget recreation when item identity changes,
                     // preventing CachedNetworkImage from crossfading a cached
                     // thumbnail from the previous item at the same list index.
                     key: ValueKey(item.id),
@@ -102,6 +117,7 @@ class ContentSectionWidget extends StatelessWidget {
                       thumbnailUrl: item.thumbnailUrl,
                       cardWidth: cardW,
                       rating: item.rating,
+                      accessStatus: item.accessStatus,
                     ),
                   );
                 },
@@ -125,13 +141,6 @@ const Color _starGold     = Color(0xFFFFC107); // gold star
 //
 //  Single row, left → right:
 //  [PARTNER NAME] [❤ if loved] [👁 if watched] [🎬 N VIDEOS] [⭐ 4.0]  [View All >]
-//
-//  Spacing (per spec):
-//    Name → Heart      : 8 px
-//    Heart → VideoIcon : 12 px  (or Name → VideoIcon : 12 px if no heart)
-//    VideoIcon → Text  : 4 px
-//    Videos → Star     : 12 px
-//    Star → Rating     : 4 px
 
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.section, this.onViewAll});
@@ -145,15 +154,12 @@ class _SectionHeader extends StatelessWidget {
     final isMostWatched = section.badges.any((b) => b.isMostWatched);
     final hasRating     = section.rating != null && section.rating! > 0;
 
-    // Single flat Row — CrossAxisAlignment.center is the single source of
-    // truth for vertical alignment. No nested Expanded/Row to fight it.
-    // Flexible on the name clips long text. Spacer() pushes View All right.
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // ── Partner name — full, no clipping ──────────────────────
+          // ── Partner name ──────────────────────────────────────────
           Text(
             section.sourceName.toUpperCase(),
             style: const TextStyle(
@@ -164,34 +170,18 @@ class _SectionHeader extends StatelessWidget {
             ),
           ),
 
-          // ── Most Loved heart — 26px, original asset colors ────────
           if (isMostLoved) ...[
             const SizedBox(width: 8),
-            Image.asset(
-              'assets/icons/mostloved.png',
-              width: 26,
-              height: 26,
-            ),
+            Image.asset('assets/icons/mostloved.png', width: 26, height: 26),
           ],
 
-          // ── Most Watched icon — 26px, original asset colors ───────
           if (isMostWatched) ...[
             const SizedBox(width: 8),
-            Image.asset(
-              'assets/icons/mostwatched.png',
-              width: 26,
-              height: 26,
-            ),
+            Image.asset('assets/icons/mostwatched.png', width: 26, height: 26),
           ],
 
-          // ── Video group — always shown ─────────────────────────────
-          // video.svg has fill="#ee4166" baked in — no colorFilter needed
           const SizedBox(width: 12),
-          SvgPicture.asset(
-            'assets/icons/video.svg',
-            width: 14,
-            height: 14,
-          ),
+          SvgPicture.asset('assets/icons/video.svg', width: 14, height: 14),
           const SizedBox(width: 4),
           Text(
             '${section.videoCount} VIDEOS',
@@ -202,7 +192,6 @@ class _SectionHeader extends StatelessWidget {
             ),
           ),
 
-          // ── Star + rating group — conditional ─────────────────────
           if (hasRating) ...[
             const SizedBox(width: 12),
             const Icon(Icons.star_rounded, color: _starGold, size: 16),
@@ -217,10 +206,8 @@ class _SectionHeader extends StatelessWidget {
             ),
           ],
 
-          // ── Spacer pushes View All to far right ────────────────────
           const Spacer(),
 
-          // ── View All — tap area extended via opaque hit-test ───────
           GestureDetector(
             onTap: onViewAll,
             behavior: HitTestBehavior.opaque,

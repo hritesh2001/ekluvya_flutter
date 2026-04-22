@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/utils/logger.dart';
+import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
 import '../viewmodels/auth_viewmodel.dart';
+import '../widgets/app_toast.dart';
 
 class OtpScreen extends StatefulWidget {
   const OtpScreen({super.key});
@@ -102,13 +104,22 @@ class _OtpScreenState extends State<OtpScreen> {
     if (!mounted) return;
 
     if (loggedIn) {
-      // Routing is driven by identify-user result (passed via navigation args):
-      //   _isRegistered = true  → existing user → go home
-      //   _isRegistered = false → new user      → go to registration
       AppLogger.info('OtpScreen',
-          'login success, isRegistered=$_isRegistered → routing to ${_isRegistered ? '/home' : '/register'}');
+          'login success, isRegistered=$_isRegistered → running post-login flow');
+
+      // Run the mandatory 4-step post-login sequence.
+      final sessionVM = context.read<SessionViewModel>();
+      await sessionVM.runPostLoginFlow();
+      if (!mounted) return;
+
+      // Device restriction blocks access entirely.
+      if (sessionVM.isDeviceRestricted) {
+        Navigator.pushReplacementNamed(context, '/device-restriction');
+        return;
+      }
 
       if (_isRegistered) {
+        AppToast.show(context, message: 'You have successfully logged in');
         Navigator.pushReplacementNamed(context, '/home');
       } else {
         Navigator.pushReplacementNamed(

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -21,11 +24,15 @@ class _SplashScreenState extends State<SplashScreen>
     );
     _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
     _controller.forward();
-    _navigate();
+    _initAndNavigate();
   }
 
-  Future<void> _navigate() async {
-    await Future<void>.delayed(const Duration(milliseconds: 1800));
+  Future<void> _initAndNavigate() async {
+    // Run session init + minimum splash duration in parallel.
+    await Future.wait<void>([
+      context.read<SessionViewModel>().initialize(),
+      Future<void>.delayed(const Duration(milliseconds: 1800)),
+    ]);
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, '/home');
   }

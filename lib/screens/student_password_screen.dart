@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
 import '../viewmodels/auth_viewmodel.dart';
+import '../widgets/app_toast.dart';
 
 class StudentPasswordScreen extends StatefulWidget {
   const StudentPasswordScreen({super.key});
@@ -47,6 +49,15 @@ class _StudentPasswordScreenState extends State<StudentPasswordScreen> {
     if (!mounted) return;
 
     if (success) {
+      final sessionVM = context.read<SessionViewModel>();
+      await sessionVM.runPostLoginFlow();
+      if (!mounted) return;
+
+      if (sessionVM.isDeviceRestricted) {
+        Navigator.pushReplacementNamed(context, '/device-restriction');
+        return;
+      }
+      AppToast.show(context, message: 'You have successfully logged in');
       Navigator.pushReplacementNamed(context, '/home');
     } else {
       _showSnack(authVM.errorMessage ?? 'Invalid credentials');

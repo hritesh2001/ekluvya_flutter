@@ -2,6 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../features/video_access/domain/entities/video_access_status.dart';
+
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
 const Color _cardBg      = Color(0xFFF0F0F0);
@@ -12,9 +14,12 @@ const Color _metaColor   = Color(0xFF5E6278);
 
 /// Individual video / chapter card.
 ///
-/// Thumbnail overlay:
-///   • Centre white play button
-///   • Top-right bookmark: default = white outline, tapped = filled pink
+/// Thumbnail overlays:
+///   • Locked videos  → small lock icon, top-right corner, thumbnail fully visible
+///   • Unlocked/free  → centre play button only (no badge, no label)
+///
+/// Bookmark toggle always shown bottom-right.
+/// No "FREE" label — first video is silently unlocked per product spec.
 class ContentCardWidget extends StatefulWidget {
   const ContentCardWidget({
     super.key,
@@ -23,6 +28,7 @@ class ContentCardWidget extends StatefulWidget {
     required this.cardWidth,
     this.onTap,
     this.rating,
+    this.accessStatus = VideoAccessStatus.free,
   });
 
   final String title;
@@ -30,6 +36,10 @@ class ContentCardWidget extends StatefulWidget {
   final double cardWidth;
   final VoidCallback? onTap;
   final double? rating;
+
+  /// Drives lock icon visibility. Defaults to [VideoAccessStatus.free]
+  /// so callers that omit it never accidentally show a lock.
+  final VideoAccessStatus accessStatus;
 
   /// Thumbnail height = width × this ratio (16:9).
   static const double thumbAspect = 9 / 16;
@@ -64,7 +74,7 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
                   height: thumbHeight,
                   child: Stack(
                     children: [
-                      // Background image
+                      // ── Background image ──────────────────────────
                       SizedBox(
                         width: widget.cardWidth,
                         height: thumbHeight,
@@ -93,54 +103,64 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
                               ),
                       ),
 
-                      // Subtle bottom gradient
+                      // ── Subtle bottom gradient (always) ───────────
                       Positioned(
                         left: 0,
                         right: 0,
                         bottom: 0,
                         height: thumbHeight * 0.35,
-                        child: DecoratedBox(
+                        child: const DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
                                 Colors.transparent,
-                                Colors.black.withValues(alpha: 0.30),
+                                Color(0x4D000000),
                               ],
                             ),
                           ),
                         ),
                       ),
 
-                      // Centre play button — custom SVG
-                      Positioned.fill(
-                        child: Center(
-                          child: SvgPicture.asset(
-                            'assets/icons/videoplaythumbnail.svg',
-                            width: 36,
-                            height: 36,
+                      // ── Centre play button (unlocked / free) ──────
+                      if (widget.accessStatus.isPlayable)
+                        Positioned.fill(
+                          child: Center(
+                            child: SvgPicture.asset(
+                              'assets/icons/videoplaythumbnail.svg',
+                              width: 36,
+                              height: 36,
+                            ),
                           ),
                         ),
-                      ),
 
-                      // Bottom-right bookmark toggle
+                      // ── Lock icon — top-right, no dim overlay ─────
+                      // Thumbnail stays fully visible; only a small pill
+                      // badge indicates the video requires subscription.
+                      if (widget.accessStatus.isLocked)
+                        const Positioned(
+                          top: 6,
+                          right: 6,
+                          child: _LockBadge(),
+                        ),
+
+                      // ── Bookmark toggle — bottom-right ────────────
                       Positioned(
                         bottom: 6,
                         right: 6,
                         child: GestureDetector(
-                          onTap: () => setState(() => _bookmarked = !_bookmarked),
+                          onTap: () =>
+                              setState(() => _bookmarked = !_bookmarked),
                           behavior: HitTestBehavior.opaque,
                           child: Padding(
                             padding: const EdgeInsets.all(4),
                             child: _bookmarked
-                                // Selected — filled pink, original SVG colors
                                 ? SvgPicture.asset(
                                     'assets/icons/book_mark_selected.svg',
                                     width: 20,
                                     height: 20,
                                   )
-                                // Default — outline, white tint
                                 : SvgPicture.asset(
                                     'assets/icons/book_mark_select.svg',
                                     width: 20,
@@ -194,6 +214,37 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Lock badge — top-right pill ───────────────────────────────────────────────
+//
+// Matches the reference screenshot: small semi-transparent dark pill with
+// the lock.png asset. No full-card dim — thumbnail stays fully visible.
+
+class _LockBadge extends StatelessWidget {
+  const _LockBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Image.asset(
+        'assets/icons/lock.png',
+        width: 16,
+        height: 16,
+        color: Colors.white,
+        errorBuilder: (_, _, _) => const Icon(
+          Icons.lock_rounded,
+          color: Colors.white,
+          size: 16,
         ),
       ),
     );

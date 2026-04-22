@@ -12,6 +12,9 @@ import '../../../../features/channel/presentation/view/channel_videos_screen.dar
 import '../../../../features/channel/presentation/viewmodel/channel_viewmodel.dart';
 import '../../../../features/rating/domain/repositories/rating_repository.dart';
 import '../../../../features/rating/presentation/viewmodel/rating_viewmodel.dart';
+import '../../../../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../../../../features/video_access/domain/entities/video_access_status.dart';
+import '../../../../features/video_access/domain/usecases/check_video_access_usecase.dart';
 import '../../../../features/signed_cookie/domain/repositories/signed_cookie_repository.dart';
 import '../../../../features/signed_cookie/presentation/viewmodel/signed_cookie_viewmodel.dart';
 import '../../../../features/video_player/data/remote/watch_api_service.dart';
@@ -24,7 +27,10 @@ import 'content_section_widget.dart';
 import '../../../../features/search/presentation/view/search_screen.dart';
 import '../../../../features/explore/presentation/view/explore_screen.dart';
 import 'subject_chips_widget.dart';
+import '../../../../../widgets/app_toast.dart';
 import '../../../../../widgets/custom_bottom_nav_bar.dart';
+import '../../../profile/presentation/view/edit_profile_screen.dart';
+import '../../../subscription/presentation/view/subscription_plans_screen.dart';
 
 // ── Brand gradient — exactly matches the EKLUVYA logo colours ─────────────────
 //   Deep orange (#FF5722) on the left → brand pink (#E91E63) on the right.
@@ -208,7 +214,23 @@ class _CourseDetailShellState extends State<_CourseDetailShell>
             bottomNavigationBar: CustomBottomNavBar(
               selectedIndex: widget.navIndex,
               onItemTapped: widget.onNavTapped,
-              onHomeTapped: () => widget.onNavTapped(0),
+              // Smart home FAB:
+              //   • On Search / Explore / Bookmark tab → switch back to Course
+              //     tab (tab 0).  IndexedStack keeps all children alive, so the
+              //     exact partner, chapter, scroll position are all restored with
+              //     zero reload.
+              //   • Already on Course tab → pop back to the courses landing page
+              //     (HomeScreen) so the user can pick a different course.
+              onHomeTapped: () {
+                if (widget.navIndex > 0) {
+                  widget.onNavTapped(0);
+                } else {
+                  Navigator.of(context).popUntil(
+                    (route) =>
+                        route.settings.name == '/home' || route.isFirst,
+                  );
+                }
+              },
             ),
             body: IndexedStack(
               index: widget.navIndex,
@@ -491,21 +513,63 @@ class _ContentScrollView extends StatefulWidget {
 class _ContentScrollViewState extends State<_ContentScrollView> {
   static const _tag = 'CourseDetailScreen';
   final _watchApi = WatchApiService();
+  final _scrollCtrl = ScrollController();
   String? _loadingId;
 
-  String? _loadedClassId;
-  String? _loadedSubjectId;
-  String? _loadedChapterId;
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _onItemTap(ContentItemData item) async {
     AppLogger.info(_tag,
         'TAP id=${item.id} slug="${item.slug}" hls="${item.hlsUrl}"');
     if (_loadingId != null) return;
 
+    // Capture ALL context-derived values synchronously before any await.
+    // This satisfies `use_build_context_synchronously` for the entire method.
+    final sessionVM = context.read<SessionViewModel>();
     final cookieStr = context.read<SignedCookieViewModel>().cookieHeader;
+    final nav       = Navigator.of(context);
+
     final cookieHeaders = cookieStr.isNotEmpty
         ? <String, String>{'Cookie': cookieStr}
         : <String, String>{};
+
+    // Route on the domain-computed access status — no ad-hoc boolean logic here.
+    switch (item.accessStatus) {
+      case VideoAccessStatus.free:
+      case VideoAccessStatus.unlocked:
+        break; // fall through to playback
+
+      case VideoAccessStatus.requiresLogin:
+        sessionVM.setPendingVideo(
+          VideoItemModel(
+            id: item.id,
+            title: item.title,
+            description: '',
+            hlsUrl: item.hlsUrl,
+            durationSeconds: 0,
+            viewCount: 0,
+            episodeIndex: item.episodeIndex,
+            thumbnailUrl: item.thumbnailUrl,
+            slug: item.slug,
+            seriesSlug: '',
+            isSubscription: true,
+            isUserSubscribed: false,
+            isYellowStrip: false,
+            monetization: 1,
+          ),
+          cookieHeaders,
+        );
+        if (mounted) nav.pushNamed('/login');
+        return;
+
+      case VideoAccessStatus.requiresSubscription:
+        if (mounted) nav.push(SubscriptionPlansScreen.route(context));
+        return;
+    }
 
     // Prefer fetching fresh episode data via slug (validates access + fresh URL).
     if (item.slug.isNotEmpty) {
@@ -513,8 +577,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
       try {
         final episode = await _watchApi.fetchEpisode(item.slug);
         if (!mounted) return;
-        await Navigator.of(context)
-            .push(VideoPlayerScreen.route(episode, headers: cookieHeaders));
+        await nav.push(VideoPlayerScreen.route(episode, headers: cookieHeaders));
         return;
       } catch (e) {
         AppLogger.error(_tag, 'Episode fetch failed, trying direct play: $e');
@@ -533,7 +596,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
         hlsUrl: item.hlsUrl,
         durationSeconds: 0,
         viewCount: 0,
-        episodeIndex: 0,
+        episodeIndex: item.episodeIndex,
         thumbnailUrl: item.thumbnailUrl,
         slug: item.slug,
         seriesSlug: '',
@@ -542,8 +605,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
         isYellowStrip: false,
         monetization: 0,
       );
-      await Navigator.of(context)
-          .push(VideoPlayerScreen.route(video, headers: cookieHeaders));
+      await nav.push(VideoPlayerScreen.route(video, headers: cookieHeaders));
       return;
     }
 
@@ -557,13 +619,28 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
     BadgeViewModel badgeVM,
     RatingViewModel ratingVM,
   ) {
-    final items = ch.videos.map((v) => ContentItemData(
-      id: v.id,
-      slug: v.slug,
-      hlsUrl: v.hlsUrl,
-      title: v.title,
-      thumbnailUrl: v.thumbnailUrl,
-    )).toList();
+    final sessionVM = context.read<SessionViewModel>();
+    final accessUC  = context.read<CheckVideoAccessUseCase>();
+
+    // Use the video's POSITION in this partner's list (0 = first = always free),
+    // NOT v.episodeIndex which is a global API field and is never reliably 0.
+    final items = ch.videos.asMap().entries.map((entry) {
+      final listPos = entry.key;   // 0 for first video, 1, 2… for the rest
+      final v       = entry.value;
+      return ContentItemData(
+        id: v.id,
+        slug: v.slug,
+        hlsUrl: v.hlsUrl,
+        title: v.title,
+        thumbnailUrl: v.thumbnailUrl,
+        episodeIndex: v.episodeIndex,
+        accessStatus: accessUC(
+          episodeIndex: listPos,
+          isLoggedIn: sessionVM.isLoggedIn,
+          isSubscribed: sessionVM.isSubscribed,
+        ),
+      );
+    }).toList();
 
     final rating = ratingVM.ratingForChannel(ch.id);
 
@@ -579,6 +656,10 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
 
   @override
   Widget build(BuildContext context) {
+    // Re-render whenever login / subscription state changes so lock icons and
+    // FREE badges reflect the current session without requiring a full reload.
+    context.watch<SessionViewModel>();
+
     return Consumer<SignedCookieViewModel>(
       builder: (ctx, signedCookieVM, _) =>
         Consumer4<ClassSubjectViewModel, ChannelViewModel, BadgeViewModel,
@@ -597,36 +678,32 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
         final subjectId = csVM.selectedSubject?.id;
         final chapterId = csVM.selectedChapter?.id ?? '';
 
+        // Always schedule loads when params are ready.
+        // Each ViewModel's load() is idempotent — it skips if the same
+        // params are already loaded or in-flight.  Calling every build
+        // guarantees a refresh when the screen resumes from navigation
+        // without relying on stale local tracking variables.
         if (classId != null && subjectId != null) {
-          final paramsChanged = classId != _loadedClassId ||
-              subjectId != _loadedSubjectId ||
-              chapterId != (_loadedChapterId ?? '');
-          if (paramsChanged) {
-            _loadedClassId   = classId;
-            _loadedSubjectId = subjectId;
-            _loadedChapterId = chapterId;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              channelVM.load(
-                courseId: csVM.courseId,
-                classId: classId,
-                subjectId: subjectId,
-                chapterId: chapterId,
-              );
-              badgeVM.load(
-                courseId: csVM.courseId,
-                chapterId: chapterId,
-              );
-              ratingVM.load(
-                courseId: csVM.courseId,
-                classId: classId,
-                subjectId: subjectId,
-                chapterId: chapterId,
-              );
-              // Fire once — idempotent, non-fatal, cached for cookie lifetime
-              signedCookieVM.fetch();
-            });
-          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            channelVM.load(
+              courseId: csVM.courseId,
+              classId: classId,
+              subjectId: subjectId,
+              chapterId: chapterId,
+            );
+            badgeVM.load(
+              courseId: csVM.courseId,
+              chapterId: chapterId,
+            );
+            ratingVM.load(
+              courseId: csVM.courseId,
+              classId: classId,
+              subjectId: subjectId,
+              chapterId: chapterId,
+            );
+            signedCookieVM.fetch();
+          });
         }
 
         // ── Channel load states ──────────────────────────────────────────
@@ -646,6 +723,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
               channels: channelVM.channels,
               toSection: (ch, _) => _toSection(ch, badgeVM, ratingVM),
               onItemTap: _onItemTap,
+              scrollController: _scrollCtrl,
             ),
         };
       },
@@ -661,15 +739,19 @@ class _ChannelList extends StatelessWidget {
     required this.channels,
     required this.toSection,
     this.onItemTap,
+    this.scrollController,
   });
 
   final List<ChannelModel> channels;
   final ContentSectionData Function(ChannelModel, int) toSection;
   final void Function(ContentItemData)? onItemTap;
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
     return CustomScrollView(
+      key: const PageStorageKey<String>('content-channel-scroll'),
+      controller: scrollController,
       physics: const BouncingScrollPhysics(),
       slivers: [
         const SliverToBoxAdapter(child: SizedBox(height: 4)),
@@ -879,15 +961,37 @@ class _ErrorState extends StatelessWidget {
 // ── Sliding drawer panel ──────────────────────────────────────────────────────
 
 const Color _drawerAvatarBlue = Color(0xFF4A90E2);
-const Color _drawerGold       = Color(0xFFD4AF37);
 const Color _drawerDivider    = Color(0xFFE0E0E0);
 const Color _drawerTitleColor = Color(0xFF333333);
 const Color _drawerSubColor   = Color(0xFF9E9E9E);
 const Color _drawerIconColor  = Color(0xFF9E9E9E);
 
+/// Sliding left-side drawer.
+///
+/// Adapts its content based on [SessionViewModel.isLoggedIn]:
+///   • Logged out → Sign In header + basic OTHERS menu
+///   • Logged in  → Profile header (avatar + name + edit) + MY UPDATES +
+///                  full OTHERS menu (including Log out)
 class _DrawerPanel extends StatelessWidget {
   const _DrawerPanel({required this.onClose});
   final VoidCallback onClose;
+
+  // ── Logout handler ─────────────────────────────────────────────────────────
+
+  Future<void> _handleLogout(BuildContext context) async {
+    final nav       = Navigator.of(context);
+    final sessionVM = context.read<SessionViewModel>();
+
+    final confirmed = await ConfirmLogoutSheet.show(context);
+    if (confirmed != true || !context.mounted) return;
+
+    sessionVM.logout();
+    onClose();
+    AppToast.show(context, message: 'You have successfully logged out');
+    nav.popUntil((r) => r.settings.name == '/home' || r.isFirst);
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -895,181 +999,284 @@ class _DrawerPanel extends StatelessWidget {
     final bottomPad = MediaQuery.paddingOf(context).bottom;
     final drawerW   = (MediaQuery.sizeOf(context).width * 0.83).clamp(0.0, 320.0);
 
-    return Material(
-      elevation: 12,
-      shadowColor: Colors.black54,
-      borderRadius: const BorderRadius.only(
-        topRight: Radius.circular(12),
-        bottomRight: Radius.circular(12),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        width: drawerW,
-        height: double.infinity,
-        child: ColoredBox(
-          color: Colors.white,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── Gradient header ──────────────────────────────────────
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [Color(0xFFFF2D55), Color(0xFFFF7A00)],
+    return Consumer<SessionViewModel>(
+      builder: (context, sessionVM, _) {
+        final loggedIn = sessionVM.isLoggedIn;
+
+        return Material(
+          elevation: 12,
+          shadowColor: Colors.black54,
+          borderRadius: const BorderRadius.only(
+            topRight: Radius.circular(12),
+            bottomRight: Radius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: drawerW,
+            height: double.infinity,
+            child: ColoredBox(
+              color: Colors.white,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ── Gradient header ──────────────────────────────────
+                  _DrawerHeader(
+                    topPad: topPad,
+                    isLoggedIn: loggedIn,
+                    userName: sessionVM.userName,
+                    userInitials: sessionVM.userInitials,
+                    onSignInTap: () {
+                      onClose();
+                      Navigator.of(context).pushNamed('/login');
+                    },
+                    onEditTap: () {
+                      onClose();
+                      Navigator.of(context)
+                          .push(EditProfileScreen.route(context));
+                    },
                   ),
-                ),
-                padding: EdgeInsets.fromLTRB(16, topPad + 16, 16, 20),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Blue avatar circle
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _drawerAvatarBlue,
+
+                  // ── Scrollable menu body ─────────────────────────────
+                  Expanded(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // MY UPDATES — only when logged in
+                          if (loggedIn) ...[
+                            const _DrawerSectionLabel('MY UPDATES'),
+                            _DrawerItem(
+                              icon: Icons.access_time_outlined,
+                              title: 'My History',
+                              subtitle: 'Know your viewing activity',
+                              onTap: onClose,
+                            ),
+                            const _DrawerDivider(),
+                            _DrawerItem(
+                              icon: Icons.credit_card_outlined,
+                              title: 'Transaction History',
+                              subtitle: 'Know your payment transactions',
+                              onTap: onClose,
+                            ),
+                            const _DrawerSectionDivider(),
+                          ],
+
+                          // OTHERS
+                          const _DrawerSectionLabel('OTHERS'),
+                          _DrawerItem(
+                            icon: Icons.settings_outlined,
+                            title: 'App Settings',
+                            subtitle: 'Take control and customize your app',
+                            onTap: onClose,
+                          ),
+                          const _DrawerDivider(),
+                          _DrawerItem(
+                            icon: Icons.star_border_rounded,
+                            title: 'Rate us on Play Store',
+                            subtitle: 'Let us know your rating for us',
+                            onTap: onClose,
+                          ),
+                          const _DrawerDivider(),
+                          _DrawerItem(
+                            icon: Icons.devices_outlined,
+                            title: 'Manage Devices',
+                            subtitle: 'The devices and browsers you signed in are listed here',
+                            onTap: onClose,
+                          ),
+                          const _DrawerDivider(),
+                          _DrawerItem(
+                            icon: Icons.description_outlined,
+                            title: 'Privacy Policy',
+                            subtitle: 'Our terms of use & Agreements',
+                            onTap: onClose,
+                          ),
+
+                          // Log out — only when logged in
+                          if (loggedIn) ...[
+                            const _DrawerDivider(),
+                            _DrawerItem(
+                              icon: Icons.logout_rounded,
+                              title: 'Log out',
+                              subtitle: 'Sign out from the app',
+                              iconColor: const Color(0xFFE91E63),
+                              onTap: () => _handleLogout(context),
+                            ),
+                          ],
+
+                          const SizedBox(height: 16),
+                        ],
                       ),
-                      child: const Icon(
+                    ),
+                  ),
+
+                  // ── Version footer ───────────────────────────────────
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(16, 8, 16, bottomPad + 16),
+                    child: const Text(
+                      'Version – ST 1.10.0(10)',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: _drawerSubColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Drawer header ─────────────────────────────────────────────────────────────
+
+class _DrawerHeader extends StatelessWidget {
+  const _DrawerHeader({
+    required this.topPad,
+    required this.isLoggedIn,
+    required this.userName,
+    required this.userInitials,
+    required this.onSignInTap,
+    this.onEditTap,
+  });
+
+  final double topPad;
+  final bool isLoggedIn;
+  final String userName;
+  final String userInitials;
+  final VoidCallback onSignInTap;
+  final VoidCallback? onEditTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: isLoggedIn ? onEditTap : onSignInTap,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [Color(0xFFFF2D55), Color(0xFFFF7A00)],
+          ),
+        ),
+        padding: EdgeInsets.fromLTRB(16, topPad + 16, 16, 20),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Avatar circle — initials when logged in, person icon when not
+            Container(
+              width: 54,
+              height: 54,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _drawerAvatarBlue,
+              ),
+              child: Center(
+                child: isLoggedIn && userInitials.isNotEmpty
+                    ? Text(
+                        userInitials,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      )
+                    : const Icon(
                         Icons.person_rounded,
                         color: Colors.white,
                         size: 30,
                       ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            'Sign In',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w600,
-                              height: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            'For better experience',
-                            style: TextStyle(
-                              color: Colors.white.withAlpha(179),
-                              fontSize: 13,
-                              height: 1.2,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
+              ),
+            ),
+
+            const SizedBox(width: 14),
+
+            // Name / sign-in text
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isLoggedIn && userName.isNotEmpty
+                        ? userName.toUpperCase()
+                        : 'Sign In',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
                       color: Colors.white,
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-
-              // ── Subscribe button ─────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
-                child: SizedBox(
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(
-                      Icons.workspace_premium_rounded,
-                      color: _drawerGold,
-                      size: 20,
-                    ),
-                    label: const Text(
-                      'SUBSCRIBE',
-                      style: TextStyle(
-                        color: _drawerGold,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.4,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(9),
-                      ),
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                      letterSpacing: 0.4,
                     ),
                   ),
-                ),
-              ),
-
-              // ── OTHERS section label ─────────────────────────────────
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 22, 20, 6),
-                child: Text(
-                  'OTHERS',
-                  style: TextStyle(
-                    color: _drawerSubColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1.3,
+                  const SizedBox(height: 4),
+                  Text(
+                    isLoggedIn ? 'Manage your account' : 'For better experience',
+                    style: TextStyle(
+                      color: Colors.white.withAlpha(179),
+                      fontSize: 13,
+                      height: 1.2,
+                    ),
                   ),
-                ),
+                ],
               ),
+            ),
 
-              // ── Menu items with dividers ─────────────────────────────
-              _DrawerItem(
-                icon: Icons.settings_outlined,
-                title: 'App Settings',
-                subtitle: 'Take control and customize your app',
-                onTap: onClose,
-              ),
-              const _DrawerDivider(),
-              _DrawerItem(
-                icon: Icons.star_border_rounded,
-                title: 'Rate us on Play Store',
-                subtitle: 'Let us know your rating for us',
-                onTap: onClose,
-              ),
-              const _DrawerDivider(),
-              _DrawerItem(
-                icon: Icons.devices_outlined,
-                title: 'Manage Devices',
-                subtitle: 'The devices and browsers you signed in are listed here',
-                onTap: onClose,
-              ),
-              const _DrawerDivider(),
-              _DrawerItem(
-                icon: Icons.description_outlined,
-                title: 'Privacy Policy',
-                subtitle: 'Our terms of use & Agreements',
-                onTap: onClose,
-              ),
-
-              const Spacer(),
-
-              // ── Version footer — centered ────────────────────────────
-              Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPad + 20),
-                child: const Text(
-                  'Version – ST 1.10.0(10)',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _drawerSubColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            // Edit icon (logged in) or chevron (logged out)
+            Icon(
+              isLoggedIn
+                  ? Icons.edit_outlined
+                  : Icons.chevron_right_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+          ],
         ),
       ),
     );
   }
 }
+
+// ── Section label ─────────────────────────────────────────────────────────────
+
+class _DrawerSectionLabel extends StatelessWidget {
+  const _DrawerSectionLabel(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 6),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _drawerSubColor,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-width separator between sections.
+class _DrawerSectionDivider extends StatelessWidget {
+  const _DrawerSectionDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: 8,
+        color: const Color(0xFFF5F5F5),
+        margin: const EdgeInsets.symmetric(vertical: 6),
+      );
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 class _DrawerDivider extends StatelessWidget {
   const _DrawerDivider();
@@ -1090,12 +1297,14 @@ class _DrawerItem extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.iconColor,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1110,7 +1319,7 @@ class _DrawerItem extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(top: 1),
-              child: Icon(icon, color: _drawerIconColor, size: 24),
+              child: Icon(icon, color: iconColor ?? _drawerIconColor, size: 22),
             ),
             const SizedBox(width: 16),
             Expanded(

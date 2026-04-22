@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:provider/provider.dart';
+
 import '../../../../core/utils/logger.dart';
 import '../../data/models/channel_model.dart';
 import '../../data/models/video_item_model.dart';
+import '../../../auth/presentation/viewmodel/session_viewmodel.dart';
 import '../../../class_subject/presentation/view/content_card_widget.dart';
+import '../../../video_access/domain/entities/video_access_status.dart';
+import '../../../video_access/domain/usecases/check_video_access_usecase.dart';
 import '../../../video_player/data/remote/watch_api_service.dart';
 import '../../../video_player/presentation/view/video_player_screen.dart';
+import '../../../subscription/presentation/view/subscription_plans_screen.dart';
 
 const Color _gradPink   = Color(0xFFE91E63);
 const Color _gradOrange = Color(0xFFFF5722);
@@ -36,7 +42,7 @@ class _ChannelVideosScreenState extends State<ChannelVideosScreen> {
   // slug of the card currently being loaded — null when idle
   String? _loadingSlug;
 
-  Future<void> _onVideoTap(VideoItemModel v) async {
+  Future<void> _onVideoTap(VideoItemModel v, int listIndex) async {
     AppLogger.info(_tag, 'TAP id=${v.id} slug="${v.slug}" hls="${v.hlsUrl}"');
 
     if (_loadingSlug != null) {
@@ -44,7 +50,34 @@ class _ChannelVideosScreenState extends State<ChannelVideosScreen> {
       return;
     }
 
-    final slug = v.slug.isNotEmpty ? v.slug : null;
+    // Capture ALL context-derived values before any await.
+    final sessionVM = context.read<SessionViewModel>();
+    final accessUC  = context.read<CheckVideoAccessUseCase>();
+    final nav       = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final status = accessUC(
+      episodeIndex: listIndex,   // position in THIS list, not the API field
+      isLoggedIn:   sessionVM.isLoggedIn,
+      isSubscribed: sessionVM.isSubscribed,
+    );
+
+    switch (status) {
+      case VideoAccessStatus.free:
+      case VideoAccessStatus.unlocked:
+        break; // proceed to playback
+
+      case VideoAccessStatus.requiresLogin:
+        sessionVM.setPendingVideo(v, widget.headers);
+        if (mounted) nav.pushNamed('/login');
+        return;
+
+      case VideoAccessStatus.requiresSubscription:
+        if (mounted) nav.push(SubscriptionPlansScreen.route(context));
+        return;
+    }
+
+    final slug       = v.slug.isNotEmpty ? v.slug : null;
     final loadingKey = slug ?? v.id;
 
     if (slug != null) {
@@ -52,16 +85,14 @@ class _ChannelVideosScreenState extends State<ChannelVideosScreen> {
       try {
         final episode = await _watchApi.fetchEpisode(slug);
         if (!mounted) return;
-        await Navigator.of(context).push(
-            VideoPlayerScreen.route(episode, headers: widget.headers));
+        await nav.push(VideoPlayerScreen.route(episode, headers: widget.headers));
       } catch (e) {
         AppLogger.error(_tag, 'Failed to load episode $slug', e);
         if (!mounted) return;
         if (v.hlsUrl.isNotEmpty) {
-          await Navigator.of(context).push(
-              VideoPlayerScreen.route(v, headers: widget.headers));
+          await nav.push(VideoPlayerScreen.route(v, headers: widget.headers));
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(
               content: const Text('Failed to load video. Please try again.'),
               backgroundColor: Colors.red.shade700,
@@ -76,8 +107,7 @@ class _ChannelVideosScreenState extends State<ChannelVideosScreen> {
         if (mounted) setState(() => _loadingSlug = null);
       }
     } else if (v.hlsUrl.isNotEmpty) {
-      await Navigator.of(context).push(
-          VideoPlayerScreen.route(v, headers: widget.headers));
+      await nav.push(VideoPlayerScreen.route(v, headers: widget.headers));
     }
   }
 
@@ -198,7 +228,9 @@ class _VideoGrid extends StatelessWidget {
 
   final ChannelModel channel;
   final String? loadingSlug;
-  final void Function(VideoItemModel) onTap;
+  // Carries the list index alongside the video so the tap handler can compute
+  // access status by position, not by the API's global episodeIndex field.
+  final void Function(VideoItemModel v, int listIndex) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -206,6 +238,10 @@ class _VideoGrid extends StatelessWidget {
     const hPad = 16.0;
     const gap  = 10.0;
     final cardWidth = (screenWidth - hPad * 2 - gap) / 2;
+
+    // Read once per build — both are stateless/cheap.
+    final accessUC  = context.read<CheckVideoAccessUseCase>();
+    final sessionVM = context.watch<SessionViewModel>(); // rebuilds on login/sub change
 
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(hPad, 16, hPad, 24),
@@ -217,18 +253,25 @@ class _VideoGrid extends StatelessWidget {
       ),
       itemCount: channel.videos.length,
       itemBuilder: (_, i) {
-        final v = channel.videos[i];
+        if (i < 0 || i >= channel.videos.length) return const SizedBox.shrink();
+        final v         = channel.videos[i];
         final isLoading = loadingSlug == v.slug || loadingSlug == v.id;
+        final status = accessUC(
+          episodeIndex: i,             // list position — first card is always free
+          isLoggedIn:   sessionVM.isLoggedIn,
+          isSubscribed: sessionVM.isSubscribed,
+        );
         return GestureDetector(
+          key: ValueKey(v.id),
           behavior: HitTestBehavior.opaque,
-          onTap: () => onTap(v),
+          onTap: () => onTap(v, i),   // pass index so tap handler agrees with UI
           child: Stack(
             children: [
-              // Pass onTap:null so the inner GestureDetector doesn't compete
               ContentCardWidget(
                 title: v.title,
                 thumbnailUrl: v.thumbnailUrl,
                 cardWidth: cardWidth,
+                accessStatus: status,
               ),
               if (isLoading)
                 Positioned.fill(

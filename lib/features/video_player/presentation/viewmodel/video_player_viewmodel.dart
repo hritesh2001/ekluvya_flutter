@@ -14,7 +14,7 @@ import '../../data/services/watch_progress_service.dart';
 
 enum VideoPlayerState { idle, loading, playing, paused, buffering, error }
 
-/// Owns the [BetterPlayerController] lifecycle for a single video.
+/// Owns the [BetterPlayerController] lifecycle for a single video or playlist.
 class VideoPlayerViewModel extends ChangeNotifier {
   static const _tag = 'VideoPlayerViewModel';
   static const _saveIntervalSeconds = 5;
@@ -42,12 +42,45 @@ class VideoPlayerViewModel extends ChangeNotifier {
   int _initializationGeneration = 0;
   Map<String, String> _headers = const {};
 
+  // ── Playlist / chapter ─────────────────────────────────────────────────────
+  List<VideoItemModel> _playlist = const [];
+  int _currentIndex = 0;
+  String _chapterName = '';
+
+  // ── Rating ─────────────────────────────────────────────────────────────────
+  double _userRating = 0.0;
+
+  // ── Getters ────────────────────────────────────────────────────────────────
   VideoPlayerState get state => _state;
   String? get errorMessage => _errorMessage;
   BetterPlayerController? get controller => _controller;
   WatchProgressModel? get savedProgress => _savedProgress;
 
+  List<VideoItemModel> get playlist => _playlist;
+  int get currentIndex => _currentIndex;
+  bool get hasNext => _playlist.isNotEmpty && _currentIndex < _playlist.length - 1;
+  bool get hasPrevious => _playlist.isNotEmpty && _currentIndex > 0;
+  String get chapterName => _chapterName;
+  VideoItemModel? get currentVideo => _video;
+  double get userRating => _userRating;
+
   // ── Public API ─────────────────────────────────────────────────────────────
+
+  /// Optionally set a playlist before calling [initialize].
+  void setPlaylist(
+    List<VideoItemModel> playlist,
+    int initialIndex, {
+    String chapterName = '',
+  }) {
+    _playlist = List.unmodifiable(playlist);
+    _currentIndex = initialIndex.clamp(0, playlist.isEmpty ? 0 : playlist.length - 1);
+    _chapterName = chapterName;
+  }
+
+  void setUserRating(double rating) {
+    _userRating = rating.clamp(0.0, 5.0);
+    notifyListeners();
+  }
 
   Future<void> initialize(
     VideoItemModel video, {
@@ -137,10 +170,64 @@ class VideoPlayerViewModel extends ChangeNotifier {
     }
   }
 
-  /// Pauses playback. Called by the screen before it navigates away so
-  /// ExoPlayer stops rendering before the surface is torn down.
   void pause() {
     _controller?.pause();
+  }
+
+  void play() {
+    _controller?.play();
+  }
+
+  void togglePlayPause() {
+    final c = _controller;
+    if (c == null) return;
+    if (c.isPlaying() == true) {
+      c.pause();
+    } else {
+      c.play();
+    }
+  }
+
+  void seekForward(Duration amount) {
+    final c = _controller;
+    if (c == null) return;
+    final current = c.videoPlayerController?.value.position ?? Duration.zero;
+    final duration = c.videoPlayerController?.value.duration ?? Duration.zero;
+    final target = current + amount;
+    c.seekTo(target > duration ? duration : target);
+  }
+
+  void seekBackward(Duration amount) {
+    final c = _controller;
+    if (c == null) return;
+    final current = c.videoPlayerController?.value.position ?? Duration.zero;
+    final target = current - amount;
+    c.seekTo(target < Duration.zero ? Duration.zero : target);
+  }
+
+  void seekTo(Duration position) {
+    _controller?.seekTo(position);
+  }
+
+  Future<void> playNext() async {
+    if (!hasNext) return;
+    _currentIndex++;
+    _disposeController();
+    await initialize(_playlist[_currentIndex], headers: _headers);
+  }
+
+  Future<void> playPrevious() async {
+    if (!hasPrevious) return;
+    _currentIndex--;
+    _disposeController();
+    await initialize(_playlist[_currentIndex], headers: _headers);
+  }
+
+  Future<void> playAt(int index) async {
+    if (index < 0 || index >= _playlist.length) return;
+    _currentIndex = index;
+    _disposeController();
+    await initialize(_playlist[_currentIndex], headers: _headers);
   }
 
   Future<void> retry() async {
@@ -161,17 +248,11 @@ class VideoPlayerViewModel extends ChangeNotifier {
       fit: BoxFit.cover,
       autoPlay: true,
       looping: false,
-      // Let WakelockPlus own screen-wake exclusively — BetterPlayer's
-      // internal wakelock mechanism adds redundant overhead.
       allowedScreenSleep: true,
       fullScreenByDefault: false,
-      // We manage orientation ourselves; these flags add listener overhead
-      // and are irrelevant since BetterPlayer fullscreen is disabled.
       autoDetectFullscreenDeviceOrientation: false,
       autoDetectFullscreenAspectRatio: false,
       expandToFill: true,
-      // Black container instead of Image.network: avoids a competing HTTP
-      // request during the critical HLS-manifest fetch window.
       placeholder: const ColoredBox(color: Colors.black),
       deviceOrientationsOnFullScreen: const [
         DeviceOrientation.landscapeLeft,
@@ -180,37 +261,11 @@ class VideoPlayerViewModel extends ChangeNotifier {
       deviceOrientationsAfterFullScreen: const [
         DeviceOrientation.portraitUp,
       ],
-      controlsConfiguration: const BetterPlayerControlsConfiguration(
-        progressBarPlayedColor: Color(0xFFE91E63),
-        progressBarHandleColor: Color(0xFFE91E63),
-        progressBarBufferedColor: Color(0x55E91E63),
-        progressBarBackgroundColor: Color(0x40FFFFFF),
-        controlBarColor: Color(0xCC000000),
-        iconsColor: Color(0xFFFFFFFF),
-        textColor: Color(0xFFFFFFFF),
-        loadingColor: Color(0xFFE91E63),
-        enableSkips: true,
-        forwardSkipTimeInMilliseconds: 10000,
-        backwardSkipTimeInMilliseconds: 10000,
-        enablePlaybackSpeed: true,
-        // controlsHideTime drives the AnimatedOpacity fade duration for
-        // every control widget in BetterPlayer's material controls source
-        // (6 AnimatedOpacity wrappers all read this value).  200 ms gives
-        // a crisp OTT-level appear/disappear without feeling abrupt.
-        // The auto-hide idle timer is hardcoded at 3 000 ms in the source
-        // and is independent of this value.
-        controlsHideTime: Duration(milliseconds: 200),
-        enableQualities: true,
-        enableSubtitles: false,
-        enableAudioTracks: false,
-        enableFullscreen: false,
-        enableMute: true,
-        enableOverflowMenu: true,
-        enableProgressText: true,
-        enableRetry: true,
-        enablePip: false,
-        // Controls only appear on tap — eliminates the grey overlay flash
-        // on every video start.
+      // Custom theme suppresses all built-in controls UI — our overlay handles everything.
+      controlsConfiguration: BetterPlayerControlsConfiguration(
+        playerTheme: BetterPlayerTheme.custom,
+        customControlsBuilder: (controller, onPlayerVisibilityChanged) =>
+            const SizedBox.shrink(),
         showControlsOnInitialize: false,
       ),
     );
@@ -223,6 +278,7 @@ class VideoPlayerViewModel extends ChangeNotifier {
       case BetterPlayerEventType.initialized:
         _cancelInitializationTimeout();
         _applyResumePosition();
+        _controller?.play(); // guarantee autoplay even when seekTo interrupts auto-start
         _setState(VideoPlayerState.playing);
 
       case BetterPlayerEventType.play:
@@ -280,6 +336,9 @@ class VideoPlayerViewModel extends ChangeNotifier {
     try {
       _controller?.seekTo(Duration(seconds: p.positionSeconds));
       AppLogger.info(_tag, 'Resumed at ${p.positionSeconds}s');
+      // Ensure playback continues after the seek — BetterPlayer may briefly
+      // pause when seekTo() is called immediately after initialization.
+      _controller?.play();
     } catch (e, st) {
       AppLogger.warning(_tag, 'Resume seek failed: $e');
       AppLogger.error(_tag, 'Resume seek stack trace', e, st);
@@ -383,12 +442,10 @@ class VideoPlayerViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
-    _initializationGeneration++; // invalidates any in-flight initialize() call
+    _initializationGeneration++;
     _cancelInitializationTimeout();
     _saveTimer?.cancel();
     _saveTimer = null;
-    // Pause before disposal — stops ExoPlayer rendering before the platform
-    // texture is torn down, preventing surface-release exceptions.
     _controller?.pause();
     unawaited(_saveCurrentProgress());
     _disposeController();
