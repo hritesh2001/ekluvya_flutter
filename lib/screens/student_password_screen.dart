@@ -48,20 +48,32 @@ class _StudentPasswordScreenState extends State<StudentPasswordScreen> {
     final success = await authVM.studentLogin(_username, password);
     if (!mounted) return;
 
-    if (success) {
-      final sessionVM = context.read<SessionViewModel>();
-      await sessionVM.runPostLoginFlow();
-      if (!mounted) return;
-
-      if (sessionVM.isDeviceRestricted) {
-        Navigator.pushReplacementNamed(context, '/device-restriction');
-        return;
-      }
-      AppToast.show(context, message: 'You have successfully logged in');
-      Navigator.pushReplacementNamed(context, '/home');
-    } else {
+    if (!success) {
       _showSnack(authVM.errorMessage ?? 'Invalid credentials');
+      return;
     }
+
+    // Server requires a one-time password reset before accessing home.
+    if (authVM.mustChangePassword) {
+      Navigator.pushReplacementNamed(context, '/reset-password');
+      return;
+    }
+
+    final sessionVM = context.read<SessionViewModel>();
+
+    // Seed subscription state immediately from the login response so the UI
+    // shows the correct access level while runPostLoginFlow fetches the profile.
+    sessionVM.seedSubscriptionFromLogin(authVM.isUserSubscribed);
+
+    await sessionVM.runPostLoginFlow();
+    if (!mounted) return;
+
+    if (sessionVM.isDeviceRestricted) {
+      Navigator.pushReplacementNamed(context, '/device-restriction');
+      return;
+    }
+    AppToast.show(context, message: 'You have successfully logged in');
+    Navigator.pushReplacementNamed(context, '/home');
   }
 
   @override

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/errors/app_exception.dart';
 import '../core/utils/logger.dart';
+import '../features/auth/data/models/device_info_model.dart';
 import '../services/api_service.dart';
 
 class AuthViewModel extends ChangeNotifier {
@@ -12,9 +13,27 @@ class AuthViewModel extends ChangeNotifier {
 
   bool _isLoading = false;
   String? _errorMessage;
+  bool _mustChangePassword = false;
+  // In-memory caches set during studentLogin.
+  String? _pendingToken;
+  String? _pendingOldPassword;
+  // Credentials cached for re-login after device logout.
+  String? _loginUsername;
+  String? _loginPassword;
+  // Subscription flag from the login response — available immediately after
+  // studentLogin() so callers can seed SessionViewModel before runPostLoginFlow.
+  bool _isUserSubscribed = false;
+  // Active device sessions parsed from the login response.
+  List<DeviceInfoModel> _activeDevices = [];
 
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  bool get mustChangePassword => _mustChangePassword;
+  String get loginUsername => _loginUsername ?? '';
+  /// Subscription flag from the student-login response. Available immediately
+  /// after a successful [studentLogin] — before [runPostLoginFlow] completes.
+  bool get isUserSubscribed => _isUserSubscribed;
+  List<DeviceInfoModel> get activeDevices => List.unmodifiable(_activeDevices);
 
   void _setLoading(bool val) {
     _isLoading = val;
@@ -182,9 +201,11 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   /// Student (admission number + password) login. Returns true on success.
+  /// Sets [mustChangePassword] when the server requires a password reset.
   Future<bool> studentLogin(String username, String password) async {
     _setLoading(true);
     _errorMessage = null;
+    _mustChangePassword = false;
     try {
       final res = await _api.studentLogin(
         username: username,
@@ -192,7 +213,44 @@ class AuthViewModel extends ChangeNotifier {
       );
       AppLogger.info(_tag, 'studentLogin status=${res['status']}');
 
-      if (_isSuccess(res)) return true;
+      if (_isSuccess(res)) {
+        final response = res['response'];
+        if (response is Map) {
+          _mustChangePassword = response['must_change_password'] == 1;
+
+          // Subscription status — available immediately from the login response.
+          final sub = response['is_user_subscribed'];
+          _isUserSubscribed = sub == true || sub == 1 || sub == '1';
+
+          // Cache credentials for re-login after device logout.
+          _loginUsername = username;
+          _loginPassword = password;
+
+          // In-memory token (primary path: must_change_password = 1).
+          String? tok = response['access_token']?.toString();
+          if (tok == null || tok.isEmpty) {
+            final devs = response['get_devices'];
+            if (devs is List && devs.isNotEmpty && devs[0] is Map) {
+              tok = devs[0]['access_token']?.toString();
+            }
+          }
+          _pendingToken = (tok != null && tok.isNotEmpty) ? tok : null;
+          if (_mustChangePassword) _pendingOldPassword = password;
+
+          // Parse active device sessions for the device restriction screen.
+          final devList = response['get_devices'];
+          _activeDevices = devList is List
+              ? devList
+                  .whereType<Map<String, dynamic>>()
+                  .map(DeviceInfoModel.fromJson)
+                  .toList()
+              : [];
+
+          AppLogger.info(_tag,
+              'studentLogin pendingToken=${_pendingToken != null} devices=${_activeDevices.length}');
+        }
+        return true;
+      }
       _setError(res['message']?.toString() ?? 'Invalid credentials');
       return false;
     } on AppException catch (e) {
@@ -205,6 +263,64 @@ class AuthViewModel extends ChangeNotifier {
     } finally {
       _setLoading(false);
     }
+  }
+
+  /// Resets the student's password (called from ResetPasswordScreen).
+  ///
+  /// Uses the in-memory [_pendingToken] set during [studentLogin] as the
+  /// primary source, falling back to the SharedPreferences-persisted token.
+  /// This survives any response-shape variation and avoids SharedPreferences
+  /// read-after-write races.
+  Future<bool> resetPassword(String newPassword) async {
+    _setLoading(true);
+    _errorMessage = null;
+    try {
+      // Prefer in-memory token; fall back to persisted token.
+      final token = _pendingToken ?? await _api.getToken() ?? '';
+      AppLogger.info(_tag, 'resetPassword token present: ${token.isNotEmpty}');
+      if (token.isEmpty) {
+        _setError('Session expired. Please log in again.');
+        return false;
+      }
+      final oldPassword = _pendingOldPassword ?? '';
+      if (oldPassword.isEmpty) {
+        _setError('Session expired. Please log in again.');
+        return false;
+      }
+      final res = await _api.resetPassword(
+        token: token,
+        oldPassword: oldPassword,
+        newPassword: newPassword,
+      );
+      AppLogger.info(_tag, 'resetPassword status=${res['status']}');
+      if (_isSuccess(res)) {
+        _pendingToken = null;
+        _pendingOldPassword = null;
+        return true;
+      }
+      _setError(res['message']?.toString() ?? 'Failed to update password');
+      return false;
+    } on AppException catch (e) {
+      _setError(e.message);
+      return false;
+    } catch (e, st) {
+      AppLogger.error(_tag, 'resetPassword failed: ${e.runtimeType}', e, st);
+      _setError('Failed to update password. Please try again.');
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// Re-login using credentials cached during [studentLogin].
+  /// Called automatically after device logout so the user lands on home
+  /// without re-entering their admission number and password.
+  Future<bool> reloginAfterDeviceLogout() async {
+    if (_loginUsername == null || _loginPassword == null) {
+      _setError('Session expired. Please log in again.');
+      return false;
+    }
+    return studentLogin(_loginUsername!, _loginPassword!);
   }
 
   /// Google OAuth login. Returns true on success.

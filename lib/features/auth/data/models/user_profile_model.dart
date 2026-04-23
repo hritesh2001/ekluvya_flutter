@@ -30,12 +30,25 @@ class UserProfileModel {
     final Map<String, dynamic> data =
         response is Map<String, dynamic> ? response : const {};
 
-    final isSubPlan = data['is_subscription_plans'];
-    final subInfo = data['subscription_info'];
-
-    final bool subscribed =
-        (isSubPlan == 1 || isSubPlan == '1' || isSubPlan == true) &&
-        (subInfo is List ? subInfo.isNotEmpty : subInfo != null && subInfo.toString().isNotEmpty);
+    // Primary: is_user_subscribed (returned by student-login and profile APIs).
+    // Fallback: is_subscription_plans == 1 AND subscription_info non-empty.
+    final isUserSubscribed = data['is_user_subscribed'];
+    final bool subscribed;
+    if (isUserSubscribed is bool) {
+      subscribed = isUserSubscribed;
+    } else if (isUserSubscribed == 1 || isUserSubscribed == '1') {
+      subscribed = true;
+    } else {
+      final isSubPlan = data['is_subscription_plans'];
+      final subInfo   = data['subscription_info'];
+      subscribed =
+          (isSubPlan == 1 || isSubPlan == '1' || isSubPlan == true) &&
+          (subInfo is List
+              ? subInfo.isNotEmpty
+              : subInfo is Map
+                  ? subInfo.isNotEmpty   // {} → false, {…} → true
+                  : subInfo != null && subInfo.toString().isNotEmpty);
+    }
 
     // Try common API field names for user display name.
     final rawName = (data['name']

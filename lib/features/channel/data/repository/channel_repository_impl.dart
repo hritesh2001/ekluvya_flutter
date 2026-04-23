@@ -28,6 +28,7 @@ class ChannelRepositoryImpl implements ChannelRepository {
     required String classId,
     required String subjectId,
     String chapterId = '',
+    String? token,
   }) {
     final key = '$courseId:$classId:$subjectId:$chapterId';
 
@@ -37,7 +38,7 @@ class ChannelRepositoryImpl implements ChannelRepository {
       return _inFlight[key]!;
     }
 
-    final future = _fetch(courseId, classId, subjectId, chapterId, key);
+    final future = _fetch(courseId, classId, subjectId, chapterId, key, token);
     _inFlight[key] = future;
     return future;
   }
@@ -48,6 +49,7 @@ class ChannelRepositoryImpl implements ChannelRepository {
     String subjectId,
     String chapterId,
     String key,
+    String? token,
   ) async {
     try {
       final channels = await _api.fetchChannels(
@@ -55,6 +57,7 @@ class ChannelRepositoryImpl implements ChannelRepository {
         classId: classId,
         subjectId: subjectId,
         chapterId: chapterId,
+        token: token,
       );
       _cache[key] = channels;
       AppLogger.info(_tag, 'Fetched ${channels.length} channels for $key');

@@ -16,7 +16,8 @@ import '../models/channel_model.dart';
 ///     ?courseId=&subjectId=&classId=&chapterId=
 ///     &page=1&limit=10&inside_limit=12
 ///
-/// No auth header required — public endpoint.
+/// Auth token is optional but strongly recommended — the server uses it to
+/// compute per-user subscription state (is_user_subscribed) per video.
 class ChannelApiService {
   static const _tag = 'ChannelApiService';
 
@@ -28,6 +29,7 @@ class ChannelApiService {
     int page = 1,
     int channelLimit = 100,  // channels per page (match Android)
     int insideLimit = 1000,  // videos per channel (match Android)
+    String? token,           // when provided, sends Authorization header
   }) async {
     // Build URL — only include chapterId when non-empty.
     final sb = StringBuffer(
@@ -42,9 +44,14 @@ class ChannelApiService {
     final url = sb.toString();
     AppLogger.info(_tag, 'GET channels → $url');
 
+    final headers = <String, String>{};
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
     try {
       final res = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(url), headers: headers.isEmpty ? null : headers)
           .timeout(AppConstants.apiTimeout);
 
       AppLogger.info(_tag, 'Channels response ${res.statusCode}');

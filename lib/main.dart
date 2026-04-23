@@ -30,6 +30,7 @@ import 'features/course/domain/repositories/course_repository.dart';
 import 'features/course/presentation/viewmodel/course_viewmodel.dart';
 import 'features/auth/data/remote/session_api_service.dart';
 import 'features/auth/presentation/view/device_restriction_screen.dart';
+import 'features/auth/presentation/viewmodel/device_viewmodel.dart';
 import 'features/auth/presentation/viewmodel/session_viewmodel.dart';
 import 'features/video_access/data/repositories/video_access_repository_impl.dart';
 import 'features/video_access/domain/repositories/video_access_repository.dart';
@@ -39,6 +40,7 @@ import 'screens/login_screen.dart';
 import 'screens/otp_screen.dart';
 import 'screens/registration_screen.dart';
 import 'screens/splash_screen.dart';
+import 'screens/reset_password_screen.dart';
 import 'screens/student_password_screen.dart';
 import 'services/api_service.dart';
 import 'viewmodels/auth_viewmodel.dart';
@@ -246,8 +248,14 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegistrationScreen(),
         '/home': (context) => const HomeScreen(),
         '/student-password': (context) => const StudentPasswordScreen(),
-        DeviceRestrictionScreen.routeName: (context) =>
-            const DeviceRestrictionScreen(),
+        '/reset-password': (context) => const ResetPasswordScreen(),
+        DeviceRestrictionScreen.routeName: (ctx) => ChangeNotifierProvider(
+          create: (c) => DeviceViewModel(
+            sessionVM: c.read<SessionViewModel>(),
+            authVM:    c.read<AuthViewModel>(),
+          ),
+          child: const DeviceRestrictionScreen(),
+        ),
       },
       // Widget-level error boundary — shows a friendly UI instead of a red screen
       builder: (context, child) {

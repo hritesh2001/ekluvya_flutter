@@ -14,5 +14,6 @@ abstract class ChannelRepository {
     required String classId,
     required String subjectId,
     String chapterId,
+    String? token,
   });
 }

@@ -9,9 +9,14 @@ abstract interface class VideoAccessRepository {
   ///
   /// Pure function — no side effects, no network calls, no state mutation.
   /// Safe to call on every build frame.
+  ///
+  /// [monetization] is the API field from the channel-list response.
+  /// monetization == 5 unlocks the video for any logged-in user (no subscription
+  /// required), but still requires login for unauthenticated viewers.
   VideoAccessStatus getAccessStatus({
     required int episodeIndex,
     required bool isLoggedIn,
     required bool isSubscribed,
+    int monetization = 0,
   });
 }

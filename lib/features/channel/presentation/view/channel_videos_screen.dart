@@ -60,6 +60,7 @@ class _ChannelVideosScreenState extends State<ChannelVideosScreen> {
       episodeIndex: listIndex,   // position in THIS list, not the API field
       isLoggedIn:   sessionVM.isLoggedIn,
       isSubscribed: sessionVM.isSubscribed,
+      monetization: v.monetization,
     );
 
     switch (status) {

@@ -3,27 +3,54 @@ import '../../domain/repositories/video_access_repository.dart';
 
 /// Concrete implementation of [VideoAccessRepository].
 ///
-/// Rule: first video in every series (episodeIndex == 0) is always free for
-/// all education partners — demo/trial purpose.  All subsequent videos require
-/// a logged-in, active subscription.
+/// Monetization values from the channel-list API:
+///   5 → login-only  (free for any authenticated user, any position)
+///   8 → subscription-gated (non-first videos require subscription)
 ///
-/// To change the rule (e.g. first 3 free, or partner-specific overrides),
-/// extend this class or provide a different implementation — callers are
-/// unaffected because they depend on the abstract interface, not this class.
+/// Evaluation order (first match wins):
+///   1. listPosition == 0                → free  (first video is always free)
+///   2. monetization == 5, logged in     → free
+///   3. monetization == 5, not logged in → requiresLogin
+///   4. monetization == 8, not logged in → requiresLogin
+///   5. monetization == 8, not subscribed→ requiresSubscription
+///   6. monetization == 8, subscribed    → unlocked
+///   7. not logged in (default)          → requiresLogin
+///   8. not subscribed (default)         → requiresSubscription
+///   9. subscribed (default)             → unlocked
 class VideoAccessRepositoryImpl implements VideoAccessRepository {
   const VideoAccessRepositoryImpl();
+
+  static const _kLoginOnly            = 5;
+  static const _kSubscriptionRequired = 8;
 
   @override
   VideoAccessStatus getAccessStatus({
     required int episodeIndex,
     required bool isLoggedIn,
     required bool isSubscribed,
+    int monetization = 0,
   }) {
-    // Guard: treat negative indices as 0 (defensive — APIs can misbehave).
     final safeIndex = episodeIndex < 0 ? 0 : episodeIndex;
 
+    // Rule 1 — first video is ALWAYS free, regardless of monetization.
     if (safeIndex == 0) return VideoAccessStatus.free;
-    if (!isLoggedIn) return VideoAccessStatus.requiresLogin;
+
+    // Rule 2 & 3 — monetization 5: free once logged in, login wall for guests.
+    if (monetization == _kLoginOnly) {
+      return isLoggedIn
+          ? VideoAccessStatus.free
+          : VideoAccessStatus.requiresLogin;
+    }
+
+    // Rule 4-6 — monetization 8: subscription required for non-first videos.
+    if (monetization == _kSubscriptionRequired) {
+      if (!isLoggedIn)   return VideoAccessStatus.requiresLogin;
+      if (!isSubscribed) return VideoAccessStatus.requiresSubscription;
+      return VideoAccessStatus.unlocked;
+    }
+
+    // Default — other monetization values.
+    if (!isLoggedIn)   return VideoAccessStatus.requiresLogin;
     if (!isSubscribed) return VideoAccessStatus.requiresSubscription;
     return VideoAccessStatus.unlocked;
   }

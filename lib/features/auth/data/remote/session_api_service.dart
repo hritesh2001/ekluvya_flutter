@@ -92,7 +92,19 @@ class SessionApiService {
         '${AppConstants.userActionsBaseUrl}/frequent-device-impression/user',
       );
       final body = jsonEncode({
-        'device_id': deviceId,
+        // New spec fields
+        'type': 1,
+        'browser':     Platform.isIOS ? 'Safari' : 'Chrome',
+        'userAgent':   Platform.isIOS ? 'iPhone' : 'Android',
+        'city':        '',
+        'country':     'India',
+        'countryCode': 'IN',
+        'region':      '',
+        'regionName':  '',
+        'timezone':    'Asia/Kolkata',
+        'coordinates': [0.0, 0.0],
+        // Legacy fields kept for backwards compatibility
+        'device_id':   deviceId,
         'device_type': Platform.isIOS ? 'ios' : 'android',
         'device_name': Platform.isIOS ? 'iPhone' : 'Android',
       });
@@ -102,6 +114,38 @@ class SessionApiService {
       AppLogger.info(_tag, 'device-impression → ${res.statusCode}');
     } catch (e) {
       AppLogger.warning(_tag, 'saveDeviceImpression failed (non-fatal): $e');
+    }
+  }
+
+  // ── Device management ─────────────────────────────────────────────────────
+
+  /// Remove a specific device session. Non-fatal — failure is logged but not
+  /// re-thrown, since the caller will always re-login afterward to validate.
+  Future<void> logoutDevice(String token, String deviceId) async {
+    try {
+      final url = Uri.parse('${AppConstants.usersBaseUrl}/muti-profile/remove');
+      final res = await http
+          .post(url,
+              headers: _authHeaders(token),
+              body: jsonEncode({'profile_id': deviceId}))
+          .timeout(AppConstants.apiTimeout);
+      AppLogger.info(_tag, 'logoutDevice $deviceId → ${res.statusCode}');
+    } catch (e) {
+      AppLogger.warning(_tag, 'logoutDevice failed (non-fatal): $e');
+    }
+  }
+
+  /// Remove ALL active device sessions for the current user.
+  Future<void> logoutAllDevices(String token) async {
+    try {
+      final url = Uri.parse('${AppConstants.usersBaseUrl}/auth/logout-all');
+      final res = await http
+          .post(url,
+              headers: _authHeaders(token), body: jsonEncode({}))
+          .timeout(AppConstants.apiTimeout);
+      AppLogger.info(_tag, 'logoutAllDevices → ${res.statusCode}');
+    } catch (e) {
+      AppLogger.warning(_tag, 'logoutAllDevices failed (non-fatal): $e');
     }
   }
 

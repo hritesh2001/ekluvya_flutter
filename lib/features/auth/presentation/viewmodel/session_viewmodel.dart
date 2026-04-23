@@ -38,6 +38,8 @@ class SessionViewModel extends ChangeNotifier {
   bool _isRunningPostLogin = false;
   String? _postLoginError;
   String _userName = '';
+  int _deviceCount = 0;
+  int _deviceLimit = 2;
 
   // Pending video — set before navigating to login so we can resume after.
   VideoItemModel? _pendingVideo;
@@ -50,6 +52,8 @@ class SessionViewModel extends ChangeNotifier {
   bool get isRunningPostLogin => _isRunningPostLogin;
   String? get postLoginError => _postLoginError;
   SessionState get sessionState => _sessionState;
+  int get deviceCount => _deviceCount;
+  int get deviceLimit => _deviceLimit;
 
   /// Display name from the profile API. Empty string when not yet loaded.
   String get userName => _userName;
@@ -98,6 +102,20 @@ class SessionViewModel extends ChangeNotifier {
     _pendingHeaders = {};
   }
 
+  // ── Early subscription seeding ────────────────────────────────────────────
+
+  /// Seeds subscription state immediately from the login API response so the
+  /// UI reflects the correct access level before [runPostLoginFlow] completes.
+  ///
+  /// Call this right after a successful [AuthViewModel.studentLogin] using
+  /// [AuthViewModel.isUserSubscribed].  [runPostLoginFlow] will confirm the
+  /// value again from the profile API.
+  void seedSubscriptionFromLogin(bool isSubscribed) {
+    _sessionState = SessionState.loggedIn;
+    _isSubscribed = isSubscribed;
+    notifyListeners();
+  }
+
   // ── Initialization ─────────────────────────────────────────────────────────
 
   /// Called once on app start. Reads stored token and restores subscription
@@ -143,8 +161,9 @@ class SessionViewModel extends ChangeNotifier {
 
       // Step 2: Get profiles (device + profile limit check)
       final profileResult = await _sessionApi.getMultiProfiles(token);
-      _isDeviceRestricted =
-          profileResult.profileCount > profileResult.profileMaxLimit;
+      _deviceCount = profileResult.profileCount;
+      _deviceLimit = profileResult.profileMaxLimit;
+      _isDeviceRestricted = _deviceCount > _deviceLimit;
 
       if (_isDeviceRestricted) {
         AppLogger.warning(
@@ -160,18 +179,31 @@ class SessionViewModel extends ChangeNotifier {
       final deviceId = await _getOrCreateDeviceId();
       await _sessionApi.saveDeviceImpression(token, deviceId);
 
-      // Step 4: Get profile (subscription check + user name — CRITICAL)
+      // Step 4: Get profile (user name + device count — CRITICAL).
+      // Subscription state is NOT updated here unless the profile API explicitly
+      // returns is_user_subscribed. The authoritative source is the login API
+      // response (already seeded via seedSubscriptionFromLogin). The profile
+      // fallback (is_subscription_plans + subscription_info) is unreliable
+      // because the server returns subscription_info: {} for all users.
       final profileJson = await _sessionApi.getProfile(token);
       final model = UserProfileModel.fromProfileJson(
         profileJson,
         profileCount: profileResult.profileCount,
         profileMaxLimit: profileResult.profileMaxLimit,
       );
-      _isSubscribed = model.isSubscribed;
+      final rawProfile = profileJson['response'];
+      final profileHasExplicitSubscription =
+          rawProfile is Map && rawProfile.containsKey('is_user_subscribed');
+      if (profileHasExplicitSubscription) {
+        _isSubscribed = model.isSubscribed;
+      }
+      // else: keep the value seeded from the login response
       if (model.name.isNotEmpty) _userName = model.name;
       AppLogger.info(
         _tag,
-        'Post-login: subscribed=$_isSubscribed device_restricted=$_isDeviceRestricted name="$_userName"',
+        'Post-login: subscribed=$_isSubscribed '
+        '(from_profile=$profileHasExplicitSubscription) '
+        'device_restricted=$_isDeviceRestricted name="$_userName"',
       );
 
       // Step 5: Refresh home data (non-blocking, callers observe CourseViewModel)
@@ -213,15 +245,35 @@ class SessionViewModel extends ChangeNotifier {
     unawaited(_api.clearToken());
   }
 
+  // ── Device management ──────────────────────────────────────────────────────
+
+  /// Signs out a specific device session then re-validates the current state.
+  Future<void> logoutDeviceSession(String deviceId) async {
+    final token = await _api.getToken() ?? '';
+    await _sessionApi.logoutDevice(token, deviceId);
+  }
+
+  /// Signs out ALL device sessions for the current account.
+  Future<void> logoutAllDeviceSessions() async {
+    final token = await _api.getToken() ?? '';
+    await _sessionApi.logoutAllDevices(token);
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   Future<void> _refreshSubscription(String token) async {
     try {
       final profileJson = await _sessionApi.getProfile(token);
       final model = UserProfileModel.fromProfileJson(profileJson);
-      _isSubscribed = model.isSubscribed;
+      final rawProfile = profileJson['response'];
+      final hasExplicit =
+          rawProfile is Map && rawProfile.containsKey('is_user_subscribed');
+      if (hasExplicit) {
+        _isSubscribed = model.isSubscribed;
+      }
       if (model.name.isNotEmpty) _userName = model.name;
-      AppLogger.info(_tag, 'Refreshed: subscribed=$_isSubscribed name="$_userName"');
+      AppLogger.info(
+          _tag, 'Refreshed: subscribed=$_isSubscribed name="$_userName"');
       notifyListeners();
     } catch (e) {
       AppLogger.warning(_tag, 'Subscription refresh failed (non-fatal): $e');

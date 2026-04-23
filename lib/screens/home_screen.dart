@@ -8,6 +8,7 @@ import '../features/banner/presentation/view/banner_carousel_widget.dart';
 import '../features/course/presentation/view/course_section_widget.dart';
 import '../features/course/presentation/view/course_shimmer_widget.dart';
 import '../features/course/presentation/viewmodel/course_viewmodel.dart';
+import '../features/subscription/presentation/view/subscription_plans_screen.dart';
 import '../features/video_player/presentation/view/video_player_screen.dart';
 
 /// Landing screen — banners + course category cards.
@@ -45,11 +46,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _resumePendingVideo() {
     final sessionVM = context.read<SessionViewModel>();
-    if (!sessionVM.hasPendingVideo || !sessionVM.isSubscribed) return;
+    if (!sessionVM.hasPendingVideo) return;
+
     final video   = sessionVM.pendingVideo!;
     final headers = sessionVM.pendingVideoHeaders;
     sessionVM.clearPendingVideo();
-    Navigator.of(context).push(VideoPlayerScreen.route(video, headers: headers));
+
+    if (sessionVM.isSubscribed) {
+      Navigator.of(context).push(VideoPlayerScreen.route(video, headers: headers));
+    } else {
+      Navigator.of(context).push(SubscriptionPlansScreen.route(context));
+    }
   }
 
   void _onVmChanged() {

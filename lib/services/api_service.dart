@@ -74,6 +74,26 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> _put(
+    String path,
+    Map<String, dynamic> body, {
+    String? overrideUrl,
+    Map<String, String>? headers,
+  }) async {
+    final url = overrideUrl ?? '${AppConstants.usersBaseUrl}$path';
+    AppLogger.info(_tag, 'PUT $url | ${jsonEncode(body)}');
+    try {
+      final res = await http
+          .put(Uri.parse(url),
+              headers: headers ?? _jsonHeaders, body: jsonEncode(body))
+          .timeout(AppConstants.apiTimeout);
+      return _decode(res, url);
+    } catch (e, st) {
+      if (e is AppException) rethrow;
+      _handleNetworkError(e, st, 'PUT $url');
+    }
+  }
+
   Future<Map<String, dynamic>> _get(
     String path, {
     String? overrideUrl,
@@ -152,24 +172,43 @@ class ApiService {
   Future<Map<String, dynamic>> googleLogin(String idToken) =>
       _post('/auth/login', {'google_auth_id': idToken});
 
-  /// Password login for student accounts
+  /// Password login for student accounts.
+  ///
+  /// Token location varies by server response:
+  ///   • must_change_password = 1 → token is at response.access_token
+  ///   • must_change_password = 0 → token is at response.get_devices[0].access_token
+  /// Both paths are checked so the token is always persisted.
   Future<Map<String, dynamic>> studentLogin({
     required String username,
     required String password,
   }) async {
     final decoded = await _post(
       '/auth/student-login',
-      {'username': username, 'password': password},
+      {
+        'username':     username,
+        'password':     password,
+        'browsername':  Platform.isIOS ? 'Safari' : 'Chrome',
+        'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
+        'login_type':   'password',
+      },
     );
     final ok = decoded['status'] == 'success' || decoded['statusCode'] == 200;
     if (ok) {
       final response = decoded['response'];
       if (response is Map) {
-        final devices = response['get_devices'];
-        if (devices is List && devices.isNotEmpty && devices[0] is Map) {
-          final token = devices[0]['access_token']?.toString();
-          if (token != null && token.isNotEmpty) await saveToken(token);
+        // Primary path (must_change_password = 1): token at response.access_token
+        String? token = response['access_token']?.toString();
+
+        // Fallback path (fully logged in): token at response.get_devices[0].access_token
+        if (token == null || token.isEmpty) {
+          final devices = response['get_devices'];
+          if (devices is List && devices.isNotEmpty && devices[0] is Map) {
+            token = devices[0]['access_token']?.toString();
+          }
         }
+
+        AppLogger.info(_tag, 'studentLogin token present: ${token != null && token.isNotEmpty}');
+        if (token != null && token.isNotEmpty) await saveToken(token);
       }
     }
     return decoded;
@@ -237,6 +276,26 @@ class ApiService {
   }
 
   // ── Profile / Media ───────────────────────────────────────────────────────
+
+  /// Change password — PUT /auth/change-password
+  /// Required body: old_password, password, password_confirmation
+  Future<Map<String, dynamic>> resetPassword({
+    required String token,
+    required String oldPassword,
+    required String newPassword,
+  }) =>
+      _put(
+        '/auth/change-password',
+        {
+          'old_password': oldPassword,
+          'password': newPassword,
+          'password_confirmation': newPassword,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
 
   Future<Map<String, dynamic>> getProfile() async {
     final token = await getToken();

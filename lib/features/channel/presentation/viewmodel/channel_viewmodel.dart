@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/utils/logger.dart';
+import '../../../../services/api_service.dart';
 import '../../data/models/channel_model.dart';
 import '../../domain/repositories/channel_repository.dart';
 
@@ -20,9 +21,13 @@ class ChannelViewModel extends ChangeNotifier {
   static const _tag = 'ChannelViewModel';
 
   final ChannelRepository _repo;
+  final ApiService? _apiService;
 
-  ChannelViewModel({required ChannelRepository repository})
-      : _repo = repository;
+  ChannelViewModel({
+    required ChannelRepository repository,
+    ApiService? apiService,
+  })  : _repo = repository,
+        _apiService = apiService;
 
   // ── State ─────────────────────────────────────────────────────────────────
 
@@ -82,11 +87,13 @@ class ChannelViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final token = await _apiService?.getToken();
       final channels = await _repo.getChannels(
         courseId: courseId,
         classId: classId,
         subjectId: subjectId,
         chapterId: chapterId,
+        token: token,
       );
       _channels = channels;
       _state = ChannelLoadState.loaded;

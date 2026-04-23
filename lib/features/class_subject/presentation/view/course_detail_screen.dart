@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/logger.dart';
+import '../../../../services/api_service.dart';
 import '../../../../features/badge/domain/repositories/badge_repository.dart';
 import '../../../../features/badge/presentation/viewmodel/badge_viewmodel.dart';
 import '../../../../features/channel/data/models/channel_model.dart';
@@ -113,6 +114,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> {
         ChangeNotifierProvider(
           create: (ctx) => ChannelViewModel(
             repository: ctx.read<ChannelRepository>(),
+            apiService: ctx.read<ApiService>(),
           ),
         ),
         ChangeNotifierProvider(
@@ -638,6 +640,7 @@ class _ContentScrollViewState extends State<_ContentScrollView> {
           episodeIndex: listPos,
           isLoggedIn: sessionVM.isLoggedIn,
           isSubscribed: sessionVM.isSubscribed,
+          monetization: v.monetization,
         ),
       );
     }).toList();
@@ -1151,7 +1154,7 @@ class _DrawerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: isLoggedIn ? onEditTap : onSignInTap,
+      onTap: (isLoggedIn && userName.isNotEmpty) ? onEditTap : onSignInTap,
       child: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -1226,14 +1229,13 @@ class _DrawerHeader extends StatelessWidget {
               ),
             ),
 
-            // Edit icon (logged in) or chevron (logged out)
-            Icon(
-              isLoggedIn
-                  ? Icons.edit_outlined
-                  : Icons.chevron_right_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
+            // Edit icon — only visible when fully authenticated
+            if (isLoggedIn && userName.isNotEmpty)
+              const Icon(
+                Icons.edit_outlined,
+                color: Colors.white,
+                size: 22,
+              ),
           ],
         ),
       ),
