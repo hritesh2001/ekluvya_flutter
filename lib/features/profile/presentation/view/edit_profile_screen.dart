@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -80,8 +81,11 @@ class _EditProfileView extends StatefulWidget {
 class _EditProfileViewState extends State<_EditProfileView> {
   final _formKey  = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
+  // Pre-initialized once — avoids re-instantiation cost on every tap
+  final _picker   = ImagePicker();
   late EditProfileViewModel _vm;
   bool _controllerBound = false;
+  bool _isPickingImage   = false;
 
   @override
   void didChangeDependencies() {
@@ -116,44 +120,55 @@ class _EditProfileViewState extends State<_EditProfileView> {
   // ── Actions ────────────────────────────────────────────────────────────────
 
   Future<void> _pickImage() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('Take a photo'),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-    if (source == null || !mounted) return;
+    if (_isPickingImage) return;
+    _isPickingImage = true;
 
-    final picked =
-        await ImagePicker().pickImage(source: source, imageQuality: 75);
-    if (picked == null || !mounted) return;
-    _vm.setPendingImage(File(picked.path));
+    try {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+      if (source == null || !mounted) return;
+
+      final picked = await _picker.pickImage(
+        source: source,
+        imageQuality: 75,
+        maxWidth: 800,
+        maxHeight: 800,
+      );
+      if (picked == null || !mounted) return;
+      _vm.setPendingImage(File(picked.path));
+    } finally {
+      _isPickingImage = false;
+    }
   }
 
   Future<void> _pickDate() async {
@@ -241,9 +256,11 @@ class _EditProfileViewState extends State<_EditProfileView> {
     if (!mounted) return;
 
     if (ok) {
-      context.read<SessionViewModel>().updateUserName(
-            '${_vm.firstName} ${_vm.lastName}'.trim(),
-          );
+      final sessionVM = context.read<SessionViewModel>();
+      sessionVM.updateUserName('${_vm.firstName} ${_vm.lastName}'.trim());
+      if (_vm.profilePictureUrl.isNotEmpty) {
+        sessionVM.updateProfilePicture(_vm.profilePictureUrl);
+      }
       AppToast.show(context, message: 'Profile updated successfully');
       Navigator.of(context).pop();
     } else {
@@ -337,9 +354,18 @@ class _EditProfileViewState extends State<_EditProfileView> {
 
             const SizedBox(height: 20),
 
-            // Subscription card — only when user has an active plan.
-            if (vm.plan != null && vm.plan!.isActive) ...[
-              _SubscriptionCard(plan: vm.plan!),
+            // Subscription card — shown whenever the session confirms the user
+            // is subscribed, with a fallback if the plan API returned no data.
+            if (context.watch<SessionViewModel>().isSubscribed) ...[
+              _SubscriptionCard(
+                plan: vm.plan ??
+                    const SubscriptionPlanModel(
+                      planName: 'Active Subscription',
+                      expiryText: '',
+                      priceDisplay: '',
+                      isActive: true,
+                    ),
+              ),
               const SizedBox(height: 28),
             ],
 
@@ -584,28 +610,35 @@ class _GradientHeader extends StatelessWidget {
               end: Alignment.centerRight,
             ),
           ),
-          child: Padding(
-            padding: EdgeInsets.only(top: topPad),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white, size: 20),
-                  onPressed: onBack,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(height: topPad),
+              SizedBox(
+                height: kToolbarHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 20),
+                      onPressed: onBack,
+                    ),
+                    const Expanded(
+                      child: Text(
+                        'Edit Profile',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 48),
+                  ],
                 ),
-                const Expanded(
-                  child: Text(
-                    'Edit Profile',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ),
-                const SizedBox(width: 48),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
 
@@ -671,12 +704,13 @@ class _AvatarImage extends StatelessWidget {
 
     final url = vm.profilePictureUrl;
     if (url.isNotEmpty) {
-      return Image.network(
-        url,
+      return CachedNetworkImage(
+        imageUrl: url,
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
-        errorBuilder: (_, err, st) => _DefaultAvatar(initials: _initials()),
+        placeholder: (_, _) => _DefaultAvatar(initials: _initials()),
+        errorWidget: (_, _, _) => _DefaultAvatar(initials: _initials()),
       );
     }
 
@@ -749,7 +783,7 @@ class _SubscriptionCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                           color: _kFieldText),
                     ),
-                    if (plan.hasExpiry) ...[
+                    if (plan.expiryDateDisplay.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Row(
                         children: [
@@ -763,11 +797,17 @@ class _SubscriptionCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            plan.expiryText,
+                            plan.expiryDateDisplay,
                             style: const TextStyle(
                                 fontSize: 12, color: _kFieldLabel),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Plan expires on ${plan.expiryDateDisplay}',
+                        style: const TextStyle(
+                            fontSize: 11, color: _kFieldLabel),
                       ),
                     ],
                   ],

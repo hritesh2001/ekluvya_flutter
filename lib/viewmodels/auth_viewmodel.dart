@@ -23,6 +23,8 @@ class AuthViewModel extends ChangeNotifier {
   // Subscription flag from the login response — available immediately after
   // studentLogin() so callers can seed SessionViewModel before runPostLoginFlow.
   bool _isUserSubscribed = false;
+  // Relative profile picture path from the login response.
+  String _loginProfilePictureUrl = '';
   // Active device sessions parsed from the login response.
   List<DeviceInfoModel> _activeDevices = [];
 
@@ -33,6 +35,10 @@ class AuthViewModel extends ChangeNotifier {
   /// Subscription flag from the student-login response. Available immediately
   /// after a successful [studentLogin] — before [runPostLoginFlow] completes.
   bool get isUserSubscribed => _isUserSubscribed;
+
+  /// Relative profile picture path from the login response (e.g. "images/…").
+  /// Callers prepend the CDN base URL before rendering.
+  String get loginProfilePictureUrl => _loginProfilePictureUrl;
   List<DeviceInfoModel> get activeDevices => List.unmodifiable(_activeDevices);
 
   void _setLoading(bool val) {
@@ -221,6 +227,10 @@ class AuthViewModel extends ChangeNotifier {
           // Subscription status — available immediately from the login response.
           final sub = response['is_user_subscribed'];
           _isUserSubscribed = sub == true || sub == 1 || sub == '1';
+
+          // Profile picture — relative path, CDN base prepended by caller.
+          _loginProfilePictureUrl =
+              (response['profile_picture'] ?? '').toString().trim();
 
           // Cache credentials for re-login after device logout.
           _loginUsername = username;

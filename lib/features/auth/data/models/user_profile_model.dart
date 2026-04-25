@@ -5,6 +5,7 @@ class UserProfileModel {
     required this.profileCount,
     required this.profileMaxLimit,
     this.name = '',
+    this.profilePictureUrl = '',
   });
 
   /// true when is_subscription_plans == 1 AND subscription_info is non-empty.
@@ -18,6 +19,10 @@ class UserProfileModel {
 
   /// Display name from the profile API. Empty when the field is absent.
   final String name;
+
+  /// Relative profile picture path from the API (e.g. "images/…jpg").
+  /// Callers are responsible for prepending the CDN base URL.
+  final String profilePictureUrl;
 
   bool get isDeviceRestricted => profileCount > profileMaxLimit;
 
@@ -59,11 +64,14 @@ class UserProfileModel {
         .toString()
         .trim();
 
+    final rawPicture = (data['profile_picture'] ?? '').toString().trim();
+
     return UserProfileModel(
       isSubscribed: subscribed,
       profileCount: profileCount,
       profileMaxLimit: profileMaxLimit,
       name: rawName,
+      profilePictureUrl: rawPicture,
     );
   }
 }

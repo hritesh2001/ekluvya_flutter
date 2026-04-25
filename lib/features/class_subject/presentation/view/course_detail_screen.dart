@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +15,8 @@ import '../../../../features/channel/presentation/viewmodel/channel_viewmodel.da
 import '../../../../features/rating/domain/repositories/rating_repository.dart';
 import '../../../../features/rating/presentation/viewmodel/rating_viewmodel.dart';
 import '../../../../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../../../../features/transactions/presentation/view/transaction_history_screen.dart';
+import '../../../../features/watch_history/presentation/view/watch_history_screen.dart';
 import '../../../../features/video_access/domain/entities/video_access_status.dart';
 import '../../../../features/video_access/domain/usecases/check_video_access_usecase.dart';
 import '../../../../features/signed_cookie/domain/repositories/signed_cookie_repository.dart';
@@ -25,6 +28,7 @@ import '../viewmodel/class_subject_viewmodel.dart';
 import 'chapter_filter_widget.dart';
 import 'class_selector_widget.dart';
 import 'content_section_widget.dart';
+import '../../../../features/bookmarks/presentation/view/bookmarks_screen.dart';
 import '../../../../features/search/presentation/view/search_screen.dart';
 import '../../../../features/explore/presentation/view/explore_screen.dart';
 import 'subject_chips_widget.dart';
@@ -244,7 +248,7 @@ class _CourseDetailShellState extends State<_CourseDetailShell>
                 ),
                 const SearchScreen(),
                 const ExploreScreen(),
-                const _NavPlaceholder(icon: Icons.bookmark_border_rounded, label: 'Bookmarks'),
+                const BookmarksScreen(),
               ],
             ),
           ),
@@ -333,32 +337,6 @@ class _CourseContent extends StatelessWidget {
         // ── Rows 5+: partner/channel sections ──────────────────────
         const Expanded(child: _ContentScrollView()),
       ],
-    );
-  }
-}
-
-// ── Placeholder tab ───────────────────────────────────────────────────────────
-
-class _NavPlaceholder extends StatelessWidget {
-  const _NavPlaceholder({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 56, color: const Color(0xFFCCCCCC)),
-          const SizedBox(height: 12),
-          Text(
-            '$label coming soon',
-            style: const TextStyle(fontSize: 15, color: Color(0xFF9E9E9E)),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1004,7 +982,8 @@ class _DrawerPanel extends StatelessWidget {
 
     return Consumer<SessionViewModel>(
       builder: (context, sessionVM, _) {
-        final loggedIn = sessionVM.isLoggedIn;
+        final loggedIn    = sessionVM.isLoggedIn;
+        final isSubscribed = sessionVM.isSubscribed;
 
         return Material(
           elevation: 12,
@@ -1028,6 +1007,7 @@ class _DrawerPanel extends StatelessWidget {
                     isLoggedIn: loggedIn,
                     userName: sessionVM.userName,
                     userInitials: sessionVM.userInitials,
+                    profilePictureUrl: sessionVM.profilePictureUrl,
                     onSignInTap: () {
                       onClose();
                       Navigator.of(context).pushNamed('/login');
@@ -1038,6 +1018,47 @@ class _DrawerPanel extends StatelessWidget {
                           .push(EditProfileScreen.route(context));
                     },
                   ),
+
+                  // ── Subscribe CTA — logged in but not subscribed ──────
+                  if (loggedIn && !isSubscribed)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                      child: GestureDetector(
+                        onTap: () {
+                          onClose();
+                          Navigator.of(context)
+                              .push(SubscriptionPlansScreen.route(context));
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Image.asset(
+                                'assets/icons/subscription_crown_gold.png',
+                                width: 20,
+                                height: 20,
+                                color: const Color(0xFFFFD700),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'SUBSCRIBE',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
 
                   // ── Scrollable menu body ─────────────────────────────
                   Expanded(
@@ -1053,14 +1074,24 @@ class _DrawerPanel extends StatelessWidget {
                               icon: Icons.access_time_outlined,
                               title: 'My History',
                               subtitle: 'Know your viewing activity',
-                              onTap: onClose,
+                              onTap: () {
+                                onClose();
+                                Navigator.of(context).push(
+                                  WatchHistoryScreen.route(context),
+                                );
+                              },
                             ),
                             const _DrawerDivider(),
                             _DrawerItem(
                               icon: Icons.credit_card_outlined,
                               title: 'Transaction History',
                               subtitle: 'Know your payment transactions',
-                              onTap: onClose,
+                              onTap: () {
+                                onClose();
+                                Navigator.of(context).push(
+                                  TransactionHistoryScreen.route(context),
+                                );
+                              },
                             ),
                             const _DrawerSectionDivider(),
                           ],
@@ -1141,6 +1172,7 @@ class _DrawerHeader extends StatelessWidget {
     required this.userName,
     required this.userInitials,
     required this.onSignInTap,
+    this.profilePictureUrl = '',
     this.onEditTap,
   });
 
@@ -1148,6 +1180,7 @@ class _DrawerHeader extends StatelessWidget {
   final bool isLoggedIn;
   final String userName;
   final String userInitials;
+  final String profilePictureUrl;
   final VoidCallback onSignInTap;
   final VoidCallback? onEditTap;
 
@@ -1167,7 +1200,7 @@ class _DrawerHeader extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Avatar circle — initials when logged in, person icon when not
+            // Avatar — profile picture > initials > person icon
             Container(
               width: 54,
               height: 54,
@@ -1175,23 +1208,15 @@ class _DrawerHeader extends StatelessWidget {
                 shape: BoxShape.circle,
                 color: _drawerAvatarBlue,
               ),
-              child: Center(
-                child: isLoggedIn && userInitials.isNotEmpty
-                    ? Text(
-                        userInitials,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.person_rounded,
-                        color: Colors.white,
-                        size: 30,
-                      ),
-              ),
+              clipBehavior: Clip.antiAlias,
+              child: isLoggedIn && profilePictureUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: profilePictureUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, _) => _buildAvatarFallback(userInitials),
+                      errorWidget: (_, _, _) => _buildAvatarFallback(userInitials),
+                    )
+                  : _buildAvatarFallback(isLoggedIn ? userInitials : ''),
             ),
 
             const SizedBox(width: 14),
@@ -1239,6 +1264,25 @@ class _DrawerHeader extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAvatarFallback(String initials) {
+    if (initials.isNotEmpty) {
+      return Center(
+        child: Text(
+          initials,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+      );
+    }
+    return const Center(
+      child: Icon(Icons.person_rounded, color: Colors.white, size: 30),
     );
   }
 }

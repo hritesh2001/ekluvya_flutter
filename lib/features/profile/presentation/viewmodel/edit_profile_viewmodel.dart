@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../services/api_service.dart';
 import '../../data/models/profile_field_model.dart';
@@ -92,7 +93,14 @@ class EditProfileViewModel extends ChangeNotifier {
     if (n.isEmpty && u.isEmpty) return '';
     if (n.isEmpty) return u;
     if (u.isEmpty) return n;
-    return '${n}_$u';
+    return '$n $u';
+  }
+
+  /// Prepends CDN base URL when the path from the API is relative.
+  static String _toFullUrl(String raw) {
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('http')) return raw;
+    return '${AppConstants.bannerImageBaseUrl}$raw';
   }
 
   // ── Save state ─────────────────────────────────────────────────────────────
@@ -294,7 +302,7 @@ class EditProfileViewModel extends ChangeNotifier {
       _username = profile.username;
       _dob = profile.dobDisplay;
       _gender = profile.gender;
-      _profilePictureUrl = profile.profilePictureUrl;
+      _profilePictureUrl = _toFullUrl(profile.profilePictureUrl);
       _mobile = profile.mobile;
       _email = profile.email;
       _admissionNumber = profile.admissionNumber;
@@ -306,9 +314,17 @@ class EditProfileViewModel extends ChangeNotifier {
       _isStudent = profile.isStudent;
 
       final subJson = results[1];
+      AppLogger.info(_tag, 'subscription raw: $subJson');
       _plan = subJson.isNotEmpty
           ? SubscriptionPlanModel.fromJson(subJson)
           : null;
+      AppLogger.info(
+        _tag,
+        'plan parsed — name="${_plan?.planName}" '
+        'price="${_plan?.priceDisplay}" '
+        'expiry="${_plan?.expiryText}" '
+        'display="${_plan?.expiryDateDisplay}"',
+      );
 
       _loadState = ProfileLoadState.loaded;
       AppLogger.info(
@@ -341,12 +357,18 @@ class EditProfileViewModel extends ChangeNotifier {
         return false;
       }
 
+      final hadPendingImage = _pendingImage != null;
+
       final res = await _profileApi.updateProfile(
         token: token,
         firstName: _firstName,
         lastName: _lastName,
         dob: _dob,
         gender: _gender,
+        phone: _mobile,
+        email: _email,
+        isPhoneVerified: _mobile.isNotEmpty ? 1 : 0,
+        isEmailVerified: _email.isNotEmpty ? 1 : 0,
         profilePicture: _pendingImage,
       );
 
@@ -356,6 +378,16 @@ class EditProfileViewModel extends ChangeNotifier {
 
       if (ok) {
         _pendingImage = null;
+        // If an image was uploaded, refresh the profile to get the new CDN URL.
+        if (hadPendingImage) {
+          try {
+            final profileJson = await _profileApi.getProfile(token);
+            final fresh = UserProfileDetailModel.fromJson(profileJson);
+            if (fresh.profilePictureUrl.isNotEmpty) {
+              _profilePictureUrl = _toFullUrl(fresh.profilePictureUrl);
+            }
+          } catch (_) {}
+        }
         _saveState = SaveState.success;
         AppLogger.info(_tag, 'Profile saved successfully');
         notifyListeners();

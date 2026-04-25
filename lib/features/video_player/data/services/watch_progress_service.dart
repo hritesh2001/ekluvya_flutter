@@ -14,6 +14,7 @@ import '../models/watch_progress_model.dart';
 class WatchProgressService {
   static const _tag         = 'WatchProgressService';
   static const _kPrefix     = 'watch_progress_';
+  static const _kThumbPrefix = 'watch_thumb_';
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -67,6 +68,33 @@ class WatchProgressService {
       await prefs.remove(_kPrefix + videoId);
     } catch (e) {
       AppLogger.warning(_tag, 'clearProgress failed for $videoId: $e');
+    }
+  }
+
+  /// Caches the episode thumbnail URL keyed by [videoId].
+  /// Called at playback start so the watch history screen can show the correct
+  /// episode thumbnail instead of the series thumbnail from master_details_id.
+  Future<void> saveThumbnail({
+    required String videoId,
+    required String thumbnailUrl,
+  }) async {
+    if (videoId.isEmpty || thumbnailUrl.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kThumbPrefix + videoId, thumbnailUrl);
+    } catch (e) {
+      AppLogger.warning(_tag, 'saveThumbnail failed for $videoId: $e');
+    }
+  }
+
+  /// Returns the cached episode thumbnail URL for [videoId], or null.
+  Future<String?> getThumbnail(String videoId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_kThumbPrefix + videoId);
+    } catch (e) {
+      AppLogger.warning(_tag, 'getThumbnail failed for $videoId: $e');
+      return null;
     }
   }
 }

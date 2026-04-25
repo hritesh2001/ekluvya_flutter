@@ -1,7 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
 
+import '../../../../features/bookmarks/presentation/viewmodel/bookmark_viewmodel.dart';
+import '../../../../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../../../../../widgets/app_toast.dart';
 import '../../../../features/video_access/domain/entities/video_access_status.dart';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
@@ -29,6 +33,10 @@ class ContentCardWidget extends StatefulWidget {
     this.onTap,
     this.rating,
     this.accessStatus = VideoAccessStatus.free,
+    // Bookmark integration — when both are provided the card uses the global
+    // BookmarkViewModel instead of local state.
+    this.episodeId = '',
+    this.seasonId = '',
   });
 
   final String title;
@@ -36,10 +44,13 @@ class ContentCardWidget extends StatefulWidget {
   final double cardWidth;
   final VoidCallback? onTap;
   final double? rating;
-
-  /// Drives lock icon visibility. Defaults to [VideoAccessStatus.free]
-  /// so callers that omit it never accidentally show a lock.
   final VideoAccessStatus accessStatus;
+
+  /// Episode `_id` from the API. When empty, the bookmark toggle uses local state only.
+  final String episodeId;
+
+  /// Section / channel ID passed as `season_id` to the bookmark API.
+  final String seasonId;
 
   /// Thumbnail height = width × this ratio (16:9).
   static const double thumbAspect = 9 / 16;
@@ -49,7 +60,8 @@ class ContentCardWidget extends StatefulWidget {
 }
 
 class _ContentCardWidgetState extends State<ContentCardWidget> {
-  bool _bookmarked = false;
+  // Fallback local state used only when episodeId is empty (backward compat).
+  bool _localBookmarked = false;
 
   @override
   Widget build(BuildContext context) {
@@ -136,8 +148,6 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
                         ),
 
                       // ── Lock icon — top-right, no dim overlay ─────
-                      // Thumbnail stays fully visible; only a small pill
-                      // badge indicates the video requires subscription.
                       if (widget.accessStatus.isLocked)
                         const Positioned(
                           top: 6,
@@ -149,29 +159,35 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
                       Positioned(
                         bottom: 6,
                         right: 6,
-                        child: GestureDetector(
-                          onTap: () =>
-                              setState(() => _bookmarked = !_bookmarked),
-                          behavior: HitTestBehavior.opaque,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: _bookmarked
-                                ? SvgPicture.asset(
-                                    'assets/icons/book_mark_selected.svg',
-                                    width: 20,
-                                    height: 20,
-                                  )
-                                : SvgPicture.asset(
-                                    'assets/icons/book_mark_select.svg',
-                                    width: 20,
-                                    height: 20,
-                                    colorFilter: const ColorFilter.mode(
-                                      Colors.white,
-                                      BlendMode.srcIn,
-                                    ),
-                                  ),
-                          ),
-                        ),
+                        child: widget.episodeId.isNotEmpty
+                            ? _BookmarkButton(
+                                episodeId: widget.episodeId,
+                                seasonId: widget.seasonId,
+                                title: widget.title,
+                              )
+                            : GestureDetector(
+                                onTap: () => setState(
+                                    () => _localBookmarked = !_localBookmarked),
+                                behavior: HitTestBehavior.opaque,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: _localBookmarked
+                                      ? SvgPicture.asset(
+                                          'assets/icons/book_mark_selected.svg',
+                                          width: 20,
+                                          height: 20,
+                                        )
+                                      : SvgPicture.asset(
+                                          'assets/icons/book_mark_select.svg',
+                                          width: 20,
+                                          height: 20,
+                                          colorFilter: const ColorFilter.mode(
+                                            Colors.white,
+                                            BlendMode.srcIn,
+                                          ),
+                                        ),
+                                ),
+                              ),
                       ),
                     ],
                   ),
@@ -220,10 +236,79 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
   }
 }
 
-// ── Lock badge — top-right pill ───────────────────────────────────────────────
+// ── Bookmark button — uses BookmarkViewModel ──────────────────────────────────
 //
-// Matches the reference screenshot: small semi-transparent dark pill with
-// the lock.png asset. No full-card dim — thumbnail stays fully visible.
+// Only rebuilt when the bookmark status for THIS episode changes, keeping the
+// rest of ContentCardWidget unaffected by ViewModel notifications.
+
+class _BookmarkButton extends StatelessWidget {
+  const _BookmarkButton({
+    required this.episodeId,
+    required this.seasonId,
+    required this.title,
+  });
+
+  final String episodeId;
+  final String seasonId;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Selector<BookmarkViewModel, bool>(
+      selector: (_, vm) => vm.isBookmarked(episodeId),
+      builder: (context, isBookmarked, _) {
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () async {
+            final vm = context.read<BookmarkViewModel>();
+            // Capture state BEFORE toggle to know which action was performed.
+            final wasBookmarked = vm.isBookmarked(episodeId);
+            final result = await vm.requestToggle(
+              episodeId: episodeId,
+              seasonId: seasonId,
+            );
+            if (!context.mounted) return;
+            switch (result) {
+              case BookmarkToggleResult.requiresLogin:
+                Navigator.pushNamed(context, '/login');
+              case BookmarkToggleResult.requiresSubscription:
+                Navigator.push(
+                  context,
+                  SubscriptionPlansScreen.route(context),
+                );
+              case BookmarkToggleResult.success:
+                final label = title.trim().isEmpty ? 'Video' : title.trim();
+                final action = wasBookmarked ? 'Bookmark Removed' : 'Bookmark Added';
+                AppToast.show(context, message: '$label $action');
+              case BookmarkToggleResult.error:
+                break;
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: isBookmarked
+                ? SvgPicture.asset(
+                    'assets/icons/book_mark_selected.svg',
+                    width: 20,
+                    height: 20,
+                  )
+                : SvgPicture.asset(
+                    'assets/icons/book_mark_select.svg',
+                    width: 20,
+                    height: 20,
+                    colorFilter: const ColorFilter.mode(
+                      Colors.white,
+                      BlendMode.srcIn,
+                    ),
+                  ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Lock badge — top-right pill ───────────────────────────────────────────────
 
 class _LockBadge extends StatelessWidget {
   const _LockBadge();

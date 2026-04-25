@@ -7,8 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/logger.dart';
+import '../../../../services/api_service.dart';
+import '../../../auth/presentation/viewmodel/session_viewmodel.dart';
 import '../../../channel/data/models/video_item_model.dart';
 import '../../../signed_cookie/domain/repositories/signed_cookie_repository.dart';
+import '../../../watch_history/data/remote/watch_history_api_service.dart';
+import '../../../watch_history/presentation/viewmodel/watch_history_viewmodel.dart';
 import '../../data/services/playback_cookie_store.dart';
 import '../../data/services/playback_header_resolver.dart';
 import '../viewmodel/video_player_viewmodel.dart';
@@ -77,6 +81,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         playbackCookieStore: PlaybackCookieStore(),
         signedCookieRepository: _tryReadSignedCookieRepository(),
       ),
+      watchHistoryApi: WatchHistoryApiService(),
+      remoteAuthApi:   context.read<ApiService>(),
+      profileId:       context.read<SessionViewModel>().defaultProfileId,
+      watchHistoryVm:  _tryReadWatchHistoryVm(),
     );
     if (widget.playlist.isNotEmpty) {
       _vm.setPlaylist(
@@ -94,6 +102,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     } on ProviderNotFoundException catch (e, st) {
       AppLogger.warning(_tag, 'SignedCookieRepository not found.');
       AppLogger.error(_tag, 'Provider lookup failed', e, st);
+      return null;
+    }
+  }
+
+  WatchHistoryViewModel? _tryReadWatchHistoryVm() {
+    try {
+      return context.read<WatchHistoryViewModel>();
+    } on ProviderNotFoundException {
       return null;
     }
   }

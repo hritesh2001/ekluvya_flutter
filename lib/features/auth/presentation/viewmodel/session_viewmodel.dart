@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../features/channel/data/models/video_item_model.dart';
 import '../../../../services/api_service.dart';
@@ -20,7 +22,11 @@ enum SessionState { unknown, loggedOut, loggedIn }
 ///   4. Call [logout] to clear session (synchronous — UI updates instantly).
 class SessionViewModel extends ChangeNotifier {
   static const _tag = 'SessionViewModel';
-  static const _deviceIdKey = 'session_device_id';
+  static const _deviceIdKey         = 'session_device_id';
+  static const _kIsSubscribed       = 'session_is_subscribed';
+  static const _kUserName           = 'session_user_name';
+  static const _kProfilePicture     = 'session_profile_picture';
+  static const _kDefaultProfileId   = 'session_default_profile_id';
 
   SessionViewModel({
     required ApiService apiService,
@@ -38,6 +44,10 @@ class SessionViewModel extends ChangeNotifier {
   bool _isRunningPostLogin = false;
   String? _postLoginError;
   String _userName = '';
+  // Relative path from API (e.g. "images/…jpg"). Full URL computed in getter.
+  String _profilePictureRelPath = '';
+  // default_profile._id from the profile API — used by Watch History.
+  String _defaultProfileId = '';
   int _deviceCount = 0;
   int _deviceLimit = 2;
 
@@ -57,6 +67,16 @@ class SessionViewModel extends ChangeNotifier {
 
   /// Display name from the profile API. Empty string when not yet loaded.
   String get userName => _userName;
+
+  /// The `_id` of the user's default profile. Used by Watch History API.
+  String get defaultProfileId => _defaultProfileId;
+
+  /// Full CDN URL for the user's profile picture, or empty string when unknown.
+  String get profilePictureUrl {
+    if (_profilePictureRelPath.isEmpty) return '';
+    if (_profilePictureRelPath.startsWith('http')) return _profilePictureRelPath;
+    return '${AppConstants.bannerImageBaseUrl}$_profilePictureRelPath';
+  }
 
   /// Two-letter initials derived from [userName] (e.g. "Nihan Reddy" → "NR").
   /// Returns a single uppercase letter if only one word is present.
@@ -106,20 +126,28 @@ class SessionViewModel extends ChangeNotifier {
 
   /// Seeds subscription state immediately from the login API response so the
   /// UI reflects the correct access level before [runPostLoginFlow] completes.
-  ///
-  /// Call this right after a successful [AuthViewModel.studentLogin] using
-  /// [AuthViewModel.isUserSubscribed].  [runPostLoginFlow] will confirm the
-  /// value again from the profile API.
-  void seedSubscriptionFromLogin(bool isSubscribed) {
+  void seedSubscriptionFromLogin(
+    bool isSubscribed, {
+    String profilePictureUrl = '',
+    String userName = '',
+  }) {
     _sessionState = SessionState.loggedIn;
     _isSubscribed = isSubscribed;
+    if (profilePictureUrl.isNotEmpty) _profilePictureRelPath = profilePictureUrl;
+    if (userName.isNotEmpty) _userName = userName;
+    // Persist immediately so the state survives an app restart.
+    unawaited(_savePersistedUserData());
     notifyListeners();
   }
 
   // ── Initialization ─────────────────────────────────────────────────────────
 
-  /// Called once on app start. Reads stored token and restores subscription
-  /// state if the user is already logged in.
+  /// Called once on app start.
+  ///
+  /// 1. Read cached token — if absent, mark loggedOut.
+  /// 2. If token present but JWT is expired, clear and mark loggedOut.
+  /// 3. Restore cached subscription / profile fields instantly.
+  /// 4. Silently re-validate in the background.
   Future<void> initialize() async {
     final token = await _api.getToken();
     if (token == null || token.isEmpty) {
@@ -128,10 +156,23 @@ class SessionViewModel extends ChangeNotifier {
       return;
     }
 
+    if (_isTokenExpired(token)) {
+      AppLogger.warning(_tag, 'Stored token is expired — clearing session');
+      _sessionState = SessionState.loggedOut;
+      unawaited(_api.clearToken());
+      unawaited(_clearPersistedUserData());
+      notifyListeners();
+      return;
+    }
+
+    // Restore cached values instantly so the UI shows correct state before
+    // the network call completes.
+    await _restorePersistedUserData();
     _sessionState = SessionState.loggedIn;
-    // Refresh subscription + user name silently in the background.
-    unawaited(_refreshSubscription(token));
     notifyListeners();
+
+    // Silently re-validate subscription + profile in the background.
+    unawaited(_refreshSubscription(token));
   }
 
   // ── Post-login flow ────────────────────────────────────────────────────────
@@ -180,11 +221,6 @@ class SessionViewModel extends ChangeNotifier {
       await _sessionApi.saveDeviceImpression(token, deviceId);
 
       // Step 4: Get profile (user name + device count — CRITICAL).
-      // Subscription state is NOT updated here unless the profile API explicitly
-      // returns is_user_subscribed. The authoritative source is the login API
-      // response (already seeded via seedSubscriptionFromLogin). The profile
-      // fallback (is_subscription_plans + subscription_info) is unreliable
-      // because the server returns subscription_info: {} for all users.
       final profileJson = await _sessionApi.getProfile(token);
       final model = UserProfileModel.fromProfileJson(
         profileJson,
@@ -199,11 +235,26 @@ class SessionViewModel extends ChangeNotifier {
       }
       // else: keep the value seeded from the login response
       if (model.name.isNotEmpty) _userName = model.name;
+      if (model.profilePictureUrl.isNotEmpty) {
+        _profilePictureRelPath = model.profilePictureUrl;
+      }
+      if (rawProfile is Map) {
+        final dp = rawProfile['default_profile'];
+        if (dp is Map) {
+          final id = dp['_id']?.toString().trim() ?? '';
+          if (id.isNotEmpty) _defaultProfileId = id;
+        }
+      }
+
+      // Persist the authoritative values so they survive app restarts.
+      unawaited(_savePersistedUserData());
+
       AppLogger.info(
         _tag,
         'Post-login: subscribed=$_isSubscribed '
         '(from_profile=$profileHasExplicitSubscription) '
-        'device_restricted=$_isDeviceRestricted name="$_userName"',
+        'device_restricted=$_isDeviceRestricted name="$_userName" '
+        'profileId="$_defaultProfileId"',
       );
 
       // Step 5: Refresh home data (non-blocking, callers observe CourseViewModel)
@@ -225,6 +276,17 @@ class SessionViewModel extends ChangeNotifier {
     final trimmed = name.trim();
     if (trimmed.isEmpty || trimmed == _userName) return;
     _userName = trimmed;
+    unawaited(_savePersistedUserData());
+    notifyListeners();
+  }
+
+  /// Updates the cached profile picture URL after a successful profile save
+  /// so the menu/drawer header reflects the new image without a session restart.
+  void updateProfilePicture(String urlOrRelPath) {
+    final trimmed = urlOrRelPath.trim();
+    if (trimmed.isEmpty || trimmed == _profilePictureRelPath) return;
+    _profilePictureRelPath = trimmed;
+    unawaited(_savePersistedUserData());
     notifyListeners();
   }
 
@@ -240,9 +302,11 @@ class SessionViewModel extends ChangeNotifier {
     _pendingHeaders = {};
     _postLoginError = null;
     _userName = '';
+    _profilePictureRelPath = '';
+    _defaultProfileId = '';
     notifyListeners();
-    // Token removal is async but non-blocking to the UI.
     unawaited(_api.clearToken());
+    unawaited(_clearPersistedUserData());
   }
 
   // ── Device management ──────────────────────────────────────────────────────
@@ -272,11 +336,96 @@ class SessionViewModel extends ChangeNotifier {
         _isSubscribed = model.isSubscribed;
       }
       if (model.name.isNotEmpty) _userName = model.name;
+      if (model.profilePictureUrl.isNotEmpty) {
+        _profilePictureRelPath = model.profilePictureUrl;
+      }
+      if (rawProfile is Map) {
+        final dp = rawProfile['default_profile'];
+        if (dp is Map) {
+          final id = dp['_id']?.toString().trim() ?? '';
+          if (id.isNotEmpty) _defaultProfileId = id;
+        }
+      }
+      unawaited(_savePersistedUserData());
       AppLogger.info(
           _tag, 'Refreshed: subscribed=$_isSubscribed name="$_userName"');
       notifyListeners();
     } catch (e) {
       AppLogger.warning(_tag, 'Subscription refresh failed (non-fatal): $e');
+    }
+  }
+
+  /// Returns true if the JWT [token] is expired (or cannot be decoded).
+  /// Does NOT make a network request — pure local check.
+  bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return false; // not a JWT — assume valid
+      // JWT parts use base64url without padding; add padding to decode.
+      var payload = parts[1];
+      payload += '=' * ((4 - payload.length % 4) % 4);
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final claims = jsonDecode(decoded) as Map<String, dynamic>;
+      final exp = claims['exp'];
+      if (exp == null) return false; // no expiry claim — assume valid
+      final expiry = DateTime.fromMillisecondsSinceEpoch(
+        (exp as num).toInt() * 1000,
+        isUtc: true,
+      );
+      return DateTime.now().toUtc().isAfter(expiry);
+    } catch (e) {
+      AppLogger.warning(_tag, 'JWT decode failed (non-fatal): $e');
+      return false; // on parse error, let the API decide
+    }
+  }
+
+  /// Persists the current subscription + profile fields to SharedPreferences
+  /// so they can be restored instantly on the next cold start.
+  Future<void> _savePersistedUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await Future.wait([
+        prefs.setBool(_kIsSubscribed, _isSubscribed),
+        prefs.setString(_kUserName, _userName),
+        prefs.setString(_kProfilePicture, _profilePictureRelPath),
+        prefs.setString(_kDefaultProfileId, _defaultProfileId),
+      ]);
+    } catch (e) {
+      AppLogger.warning(_tag, '_savePersistedUserData failed: $e');
+    }
+  }
+
+  /// Reads back the persisted fields into memory — called during [initialize]
+  /// so the UI can render correct state before the network refresh completes.
+  Future<void> _restorePersistedUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _isSubscribed         = prefs.getBool(_kIsSubscribed)         ?? false;
+      _userName             = prefs.getString(_kUserName)            ?? '';
+      _profilePictureRelPath = prefs.getString(_kProfilePicture)    ?? '';
+      _defaultProfileId     = prefs.getString(_kDefaultProfileId)   ?? '';
+      AppLogger.info(
+        _tag,
+        'Restored: subscribed=$_isSubscribed name="$_userName" '
+        'profileId="$_defaultProfileId"',
+      );
+    } catch (e) {
+      AppLogger.warning(_tag, '_restorePersistedUserData failed: $e');
+    }
+  }
+
+  /// Removes all persisted user fields from SharedPreferences on logout.
+  Future<void> _clearPersistedUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await Future.wait([
+        prefs.remove(_kIsSubscribed),
+        prefs.remove(_kUserName),
+        prefs.remove(_kProfilePicture),
+        prefs.remove(_kDefaultProfileId),
+      ]);
+    } catch (e) {
+      AppLogger.warning(_tag, '_clearPersistedUserData failed: $e');
     }
   }
 

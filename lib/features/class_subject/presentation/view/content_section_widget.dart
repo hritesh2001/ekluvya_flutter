@@ -118,6 +118,8 @@ class ContentSectionWidget extends StatelessWidget {
                       cardWidth: cardW,
                       rating: item.rating,
                       accessStatus: item.accessStatus,
+                      episodeId: item.id,
+                      seasonId: section.id,
                     ),
                   );
                 },

@@ -2,8 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../features/video_player/presentation/view/video_player_screen.dart';
 import '../viewmodels/auth_viewmodel.dart';
 import '../widgets/app_toast.dart';
+
+/// Returns true for any route that is NOT part of the auth flow.
+/// Used by [Navigator.popUntil] / [Navigator.pushAndRemoveUntil] to
+/// strip login/otp/password screens from the stack after a successful login.
+bool _isNotAuthRoute(Route<dynamic> route) =>
+    route.settings.name != '/student-password' &&
+    route.settings.name != '/login' &&
+    route.settings.name != '/otp';
 
 class StudentPasswordScreen extends StatefulWidget {
   const StudentPasswordScreen({super.key});
@@ -63,7 +73,10 @@ class _StudentPasswordScreenState extends State<StudentPasswordScreen> {
 
     // Seed subscription state immediately from the login response so the UI
     // shows the correct access level while runPostLoginFlow fetches the profile.
-    sessionVM.seedSubscriptionFromLogin(authVM.isUserSubscribed);
+    sessionVM.seedSubscriptionFromLogin(
+      authVM.isUserSubscribed,
+      profilePictureUrl: authVM.loginProfilePictureUrl,
+    );
 
     await sessionVM.runPostLoginFlow();
     if (!mounted) return;
@@ -73,7 +86,29 @@ class _StudentPasswordScreenState extends State<StudentPasswordScreen> {
       return;
     }
     AppToast.show(context, message: 'You have successfully logged in');
-    Navigator.pushReplacementNamed(context, '/home');
+
+    if (sessionVM.hasPendingVideo) {
+      // Login was triggered by tapping a locked video. Play it immediately
+      // and strip auth screens so Back goes to the listing page, not Login.
+      final video   = sessionVM.pendingVideo!;
+      final headers = Map<String, String>.from(sessionVM.pendingVideoHeaders);
+      sessionVM.clearPendingVideo();
+
+      if (sessionVM.isSubscribed) {
+        Navigator.of(context).pushAndRemoveUntil(
+          VideoPlayerScreen.route(video, headers: headers),
+          _isNotAuthRoute,
+        );
+      } else {
+        Navigator.of(context).pushAndRemoveUntil(
+          SubscriptionPlansScreen.route(context),
+          _isNotAuthRoute,
+        );
+      }
+    } else {
+      // Login from menu/drawer — pop auth screens and return to previous screen.
+      Navigator.of(context).popUntil(_isNotAuthRoute);
+    }
   }
 
   @override

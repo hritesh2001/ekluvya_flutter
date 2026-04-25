@@ -7,7 +7,10 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/utils/logger.dart';
+import '../../../../services/api_service.dart';
 import '../../../channel/data/models/video_item_model.dart';
+import '../../../watch_history/data/remote/watch_history_api_service.dart';
+import '../../../watch_history/presentation/viewmodel/watch_history_viewmodel.dart';
 import '../../data/models/watch_progress_model.dart';
 import '../../data/services/playback_header_resolver.dart';
 import '../../data/services/watch_progress_service.dart';
@@ -23,11 +26,23 @@ class VideoPlayerViewModel extends ChangeNotifier {
   VideoPlayerViewModel({
     WatchProgressService? progressService,
     PlaybackHeaderResolver? headerResolver,
+    WatchHistoryApiService? watchHistoryApi,
+    ApiService? remoteAuthApi,
+    String profileId = '',
+    WatchHistoryViewModel? watchHistoryVm,
   })  : _progressService = progressService ?? WatchProgressService(),
-        _headerResolver = headerResolver ?? PlaybackHeaderResolver();
+        _headerResolver = headerResolver ?? PlaybackHeaderResolver(),
+        _watchHistoryApi = watchHistoryApi,
+        _remoteAuthApi = remoteAuthApi,
+        _profileId = profileId,
+        _watchHistoryVm = watchHistoryVm;
 
   final WatchProgressService _progressService;
   final PlaybackHeaderResolver _headerResolver;
+  final WatchHistoryApiService? _watchHistoryApi;
+  final ApiService? _remoteAuthApi;
+  final String _profileId;
+  final WatchHistoryViewModel? _watchHistoryVm;
 
   VideoPlayerState _state = VideoPlayerState.idle;
   String? _errorMessage;
@@ -99,6 +114,14 @@ class VideoPlayerViewModel extends ChangeNotifier {
       _setErrorState('This video is not available for playback right now.');
       return;
     }
+
+    // Cache episode thumbnail so watch history can show the correct image.
+    // The watch-history API only returns series-level thumbnails via
+    // master_details_id; the episode thumbnail lives here on VideoItemModel.
+    unawaited(_progressService.saveThumbnail(
+      videoId: video.id,
+      thumbnailUrl: video.thumbnailUrl,
+    ));
 
     final generation = ++_initializationGeneration;
     _setState(VideoPlayerState.loading);
@@ -371,6 +394,30 @@ class VideoPlayerViewModel extends ChangeNotifier {
       positionSeconds: position,
       durationSeconds: duration,
     );
+    // Fire-and-forget: post progress to remote watch history API
+    unawaited(_postRemoteWatchHistory(mediaId: video.id, positionSeconds: position));
+  }
+
+  Future<void> _postRemoteWatchHistory({
+    required String mediaId,
+    required int positionSeconds,
+  }) async {
+    final api  = _watchHistoryApi;
+    final auth = _remoteAuthApi;
+    if (api == null || auth == null || mediaId.isEmpty) return;
+    try {
+      final token = await auth.getToken() ?? '';
+      if (token.isEmpty) return;
+      await api.postWatchHistory(
+        token:           token,
+        mediaId:         mediaId,
+        watchedDuration: positionSeconds,
+        playTime:        positionSeconds,
+        profileId:       _profileId,
+      );
+    } catch (e) {
+      AppLogger.warning(_tag, 'postRemoteWatchHistory failed: $e');
+    }
   }
 
   // ── Error handling ─────────────────────────────────────────────────────────
@@ -449,6 +496,8 @@ class VideoPlayerViewModel extends ChangeNotifier {
     _controller?.pause();
     unawaited(_saveCurrentProgress());
     _disposeController();
+    // Refresh My History so the just-watched video appears immediately
+    _watchHistoryVm?.refreshWatchHistory();
     super.dispose();
   }
 }

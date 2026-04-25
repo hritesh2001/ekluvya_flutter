@@ -35,6 +35,10 @@ import 'features/auth/presentation/viewmodel/session_viewmodel.dart';
 import 'features/video_access/data/repositories/video_access_repository_impl.dart';
 import 'features/video_access/domain/repositories/video_access_repository.dart';
 import 'features/video_access/domain/usecases/check_video_access_usecase.dart';
+import 'features/bookmarks/data/remote/bookmark_api_service.dart';
+import 'features/bookmarks/presentation/viewmodel/bookmark_viewmodel.dart';
+import 'features/watch_history/data/remote/watch_history_api_service.dart';
+import 'features/watch_history/presentation/viewmodel/watch_history_viewmodel.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/otp_screen.dart';
@@ -222,6 +226,50 @@ class _AppProviders extends StatelessWidget {
           ),
           update: (_, api, previous) =>
               previous ?? SignedCookieRepositoryImpl(apiService: api),
+        ),
+
+        // ── Watch History module ──────────────────────────────────────────
+        // Global singleton so the video player can post progress and the
+        // My History screen always reflects the latest server state.
+        Provider<WatchHistoryApiService>(
+          create: (_) => WatchHistoryApiService(),
+        ),
+
+        ChangeNotifierProxyProvider2<ApiService, SessionViewModel,
+            WatchHistoryViewModel>(
+          create: (ctx) => WatchHistoryViewModel(
+            watchHistoryApi: ctx.read<WatchHistoryApiService>(),
+            authApi:         ctx.read<ApiService>(),
+            sessionVM:       ctx.read<SessionViewModel>(),
+          ),
+          update: (_, api, session, previous) =>
+              previous ??
+              WatchHistoryViewModel(
+                watchHistoryApi: WatchHistoryApiService(),
+                authApi:         api,
+                sessionVM:       session,
+              ),
+        ),
+
+        // ── Bookmarks (Watch Later) module ────────────────────────────────────
+        Provider<BookmarkApiService>(
+          create: (_) => BookmarkApiService(),
+        ),
+
+        ChangeNotifierProxyProvider2<ApiService, SessionViewModel,
+            BookmarkViewModel>(
+          create: (ctx) => BookmarkViewModel(
+            bookmarkApi: ctx.read<BookmarkApiService>(),
+            authApi:     ctx.read<ApiService>(),
+            sessionVM:   ctx.read<SessionViewModel>(),
+          ),
+          update: (_, api, session, previous) =>
+              previous ??
+              BookmarkViewModel(
+                bookmarkApi: BookmarkApiService(),
+                authApi:     api,
+                sessionVM:   session,
+              ),
         ),
       ],
       child: const MyApp(),

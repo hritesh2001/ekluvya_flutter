@@ -59,11 +59,13 @@ class UserProfileDetailModel {
   String get dobDisplay {
     if (dob.isEmpty) return '';
     if (RegExp(r'^\d{2}/\d{2}/\d{4}$').hasMatch(dob)) return dob;
-    final parts = dob.split('-');
+    // Strip time component (e.g. "2000-02-01T00:00:00.000Z" → "2000-02-01")
+    final dateOnly = dob.contains('T') ? dob.split('T').first : dob;
+    final parts = dateOnly.split('-');
     if (parts.length == 3 && parts[0].length == 4) {
-      return '${parts[2]}/${parts[1]}/${parts[0]}';
+      return '${parts[2].padLeft(2, '0')}/${parts[1].padLeft(2, '0')}/${parts[0]}';
     }
-    return dob;
+    return dateOnly;
   }
 
   // ── Factory ────────────────────────────────────────────────────────────────
@@ -81,13 +83,26 @@ class UserProfileDetailModel {
     final className =
         s('class_name').isNotEmpty ? s('class_name') : s('class');
 
+    // Profile picture: prefer default_profile.profile_picture, then root level.
+    String picUrl = '';
+    final dp = data['default_profile'];
+    if (dp is Map) {
+      final dpPic = dp['profile_picture'];
+      if (dpPic is List && dpPic.isNotEmpty) {
+        picUrl = dpPic.first?.toString().trim() ?? '';
+      } else if (dpPic is String) {
+        picUrl = dpPic.trim();
+      }
+    }
+    if (picUrl.isEmpty) picUrl = s('profile_picture');
+
     return UserProfileDetailModel(
       firstName: s('first_name'),
       lastName: s('last_name'),
       username: s('username'),
       dob: s('dob'),
       gender: s('gender'),
-      profilePictureUrl: s('profile_picture'),
+      profilePictureUrl: picUrl,
       mobile: mobile,
       email: s('email'),
       admissionNumber: s('admission_number'),

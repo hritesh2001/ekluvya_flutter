@@ -3,8 +3,15 @@ import 'package:provider/provider.dart';
 
 import '../core/utils/logger.dart';
 import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../features/video_player/presentation/view/video_player_screen.dart';
 import '../viewmodels/auth_viewmodel.dart';
 import '../widgets/app_toast.dart';
+
+bool _isNotAuthRoute(Route<dynamic> route) =>
+    route.settings.name != '/student-password' &&
+    route.settings.name != '/login' &&
+    route.settings.name != '/otp';
 
 class OtpScreen extends StatefulWidget {
   const OtpScreen({super.key});
@@ -120,7 +127,26 @@ class _OtpScreenState extends State<OtpScreen> {
 
       if (_isRegistered) {
         AppToast.show(context, message: 'You have successfully logged in');
-        Navigator.pushReplacementNamed(context, '/home');
+
+        if (sessionVM.hasPendingVideo) {
+          final video   = sessionVM.pendingVideo!;
+          final headers = Map<String, String>.from(sessionVM.pendingVideoHeaders);
+          sessionVM.clearPendingVideo();
+
+          if (sessionVM.isSubscribed) {
+            Navigator.of(context).pushAndRemoveUntil(
+              VideoPlayerScreen.route(video, headers: headers),
+              _isNotAuthRoute,
+            );
+          } else {
+            Navigator.of(context).pushAndRemoveUntil(
+              SubscriptionPlansScreen.route(context),
+              _isNotAuthRoute,
+            );
+          }
+        } else {
+          Navigator.of(context).popUntil(_isNotAuthRoute);
+        }
       } else {
         Navigator.pushReplacementNamed(
           context,

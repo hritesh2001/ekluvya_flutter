@@ -2,8 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 
+import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../features/video_player/presentation/view/video_player_screen.dart';
 import '../viewmodels/auth_viewmodel.dart';
 import '../widgets/app_toast.dart';
+
+bool _isNotAuthRoute(Route<dynamic> route) =>
+    route.settings.name != '/student-password' &&
+    route.settings.name != '/login' &&
+    route.settings.name != '/otp';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -47,8 +55,36 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (success) {
+        final sessionVM = context.read<SessionViewModel>();
+        await sessionVM.runPostLoginFlow();
+        if (!mounted) return;
+
+        if (sessionVM.isDeviceRestricted) {
+          Navigator.pushReplacementNamed(context, '/device-restriction');
+          return;
+        }
+
         AppToast.show(context, message: 'You have successfully logged in');
-        Navigator.pushReplacementNamed(context, '/home');
+
+        if (sessionVM.hasPendingVideo) {
+          final video   = sessionVM.pendingVideo!;
+          final headers = Map<String, String>.from(sessionVM.pendingVideoHeaders);
+          sessionVM.clearPendingVideo();
+
+          if (sessionVM.isSubscribed) {
+            Navigator.of(context).pushAndRemoveUntil(
+              VideoPlayerScreen.route(video, headers: headers),
+              _isNotAuthRoute,
+            );
+          } else {
+            Navigator.of(context).pushAndRemoveUntil(
+              SubscriptionPlansScreen.route(context),
+              _isNotAuthRoute,
+            );
+          }
+        } else {
+          Navigator.of(context).popUntil(_isNotAuthRoute);
+        }
       } else {
         _showSnack(authVM.errorMessage ?? 'Google login failed');
       }
