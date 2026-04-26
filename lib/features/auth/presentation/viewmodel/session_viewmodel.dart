@@ -28,11 +28,23 @@ class SessionViewModel extends ChangeNotifier {
   static const _kProfilePicture     = 'session_profile_picture';
   static const _kDefaultProfileId   = 'session_default_profile_id';
 
+  // Fires when a 401 response forces the user to be logged out.
+  // NetworkGuard subscribes to this and navigates to /login.
+  final StreamController<void> _forceLogoutController =
+      StreamController<void>.broadcast();
+  Stream<void> get onForceLogout => _forceLogoutController.stream;
+
+  StreamSubscription<void>? _unauthorizedSub;
+
   SessionViewModel({
     required ApiService apiService,
     SessionApiService? sessionApiService,
   })  : _api = apiService,
-        _sessionApi = sessionApiService ?? SessionApiService();
+        _sessionApi = sessionApiService ?? SessionApiService() {
+    // React to any 401 from the API layer — covers the case where another
+    // device called logout-all and this device's token is now revoked.
+    _unauthorizedSub = _api.onUnauthorized.listen((_) => _handleForcedLogout());
+  }
 
   final ApiService _api;
   final SessionApiService _sessionApi;
@@ -306,6 +318,7 @@ class SessionViewModel extends ChangeNotifier {
     _defaultProfileId = '';
     notifyListeners();
     unawaited(_api.clearToken());
+    unawaited(_api.clearRefreshToken());
     unawaited(_clearPersistedUserData());
   }
 
@@ -321,6 +334,43 @@ class SessionViewModel extends ChangeNotifier {
   Future<void> logoutAllDeviceSessions() async {
     final token = await _api.getToken() ?? '';
     await _sessionApi.logoutAllDevices(token);
+  }
+
+  // ── Force logout (cross-device sync) ──────────────────────────────────────
+
+  /// Called when any API call returns 401 — means the server has revoked this
+  /// token (e.g. logout-all triggered from another device/platform).
+  void _handleForcedLogout() {
+    if (_sessionState != SessionState.loggedIn) return; // guard double-trigger
+    AppLogger.warning(_tag, 'Force logout: 401 received — token revoked server-side');
+    logout();
+    _forceLogoutController.add(null); // NetworkGuard navigates to /login
+  }
+
+  /// Called by NetworkGuard when the app resumes from background.
+  /// Re-validates the JWT locally; if expired or absent, forces logout.
+  /// If still valid, kicks off a background subscription/profile refresh to
+  /// detect server-side revocation on the next API response.
+  Future<void> checkTokenOnResume() async {
+    if (_sessionState != SessionState.loggedIn) return;
+    final token = await _api.getToken();
+    if (token == null || token.isEmpty || _isTokenExpired(token)) {
+      AppLogger.warning(_tag, 'checkTokenOnResume: token invalid — forcing logout');
+      logout();
+      _forceLogoutController.add(null);
+      return;
+    }
+    // Token looks valid locally — refresh profile/subscription in the background.
+    // If the server has revoked the token, _refreshSubscription will hit 401,
+    // which fires onUnauthorized → _handleForcedLogout automatically.
+    unawaited(_refreshSubscription(token));
+  }
+
+  @override
+  void dispose() {
+    _unauthorizedSub?.cancel();
+    _forceLogoutController.close();
+    super.dispose();
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

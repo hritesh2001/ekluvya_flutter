@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/utils/logger.dart';
+import '../features/auth/presentation/view/phone_device_popup.dart';
 import '../features/auth/presentation/viewmodel/session_viewmodel.dart';
 import '../features/subscription/presentation/view/subscription_plans_screen.dart';
 import '../features/video_player/presentation/view/video_player_screen.dart';
@@ -107,15 +108,30 @@ class _OtpScreenState extends State<OtpScreen> {
     }
 
     // Step 2: Complete login (phone-login API)
-    final loggedIn = await authVM.phoneLogin(_phone);
+    bool loggedIn = await authVM.phoneLogin(_phone);
     if (!mounted) return;
+
+    // Device-limit 202: show popup, let user sign out a device and retry.
+    if (!loggedIn && authVM.isPhoneDeviceLimited) {
+      loggedIn = await PhoneDevicePopup.show(context);
+      if (!mounted) return;
+      if (!loggedIn) return; // user cancelled or all retries failed
+    }
 
     if (loggedIn) {
       AppLogger.info('OtpScreen',
           'login success, isRegistered=$_isRegistered → running post-login flow');
 
-      // Run the mandatory 4-step post-login sequence.
       final sessionVM = context.read<SessionViewModel>();
+
+      // Seed subscription state immediately from the phone-login response so
+      // the UI reflects the correct access level before runPostLoginFlow
+      // completes the profile fetch.  Mirrors student_password_screen.dart:76.
+      sessionVM.seedSubscriptionFromLogin(authVM.isUserSubscribed);
+      AppLogger.info(
+          'OtpScreen', 'seeded subscription: ${authVM.isUserSubscribed}');
+
+      // Run the mandatory post-login sequence (profile fetch, device check…).
       await sessionVM.runPostLoginFlow();
       if (!mounted) return;
 

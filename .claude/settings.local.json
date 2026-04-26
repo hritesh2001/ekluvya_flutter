@@ -19,7 +19,14 @@
       "Bash(dart analyze *)",
       "Bash(python3 /c/Users/EKLUVYA/Desktop/ekluvya_app/.claude/skills/ui-ux-pro-max/scripts/search.py \"OTT education mobile app reset password form\" --design-system -p \"Ekluvya OTT\" --stack flutter)",
       "Bash(python /c/Users/EKLUVYA/Desktop/ekluvya_app/.claude/skills/ui-ux-pro-max/scripts/search.py \"OTT education mobile app reset password form\" --design-system -p \"Ekluvya OTT\")",
-      "Bash(grep -E \"\\\\.dart$\")"
+      "Bash(grep -E \"\\\\.dart$\")",
+      "Bash(flutter --version)",
+      "Bash(flutter clean *)",
+      "Bash(flutter build *)",
+      "Bash(adb devices *)",
+      "Bash(adb shell *)",
+      "Bash(adb logcat *)",
+      "Bash(adb install *)"
     ]
   }
 }

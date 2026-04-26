@@ -84,4 +84,8 @@ class BannerViewModel extends ChangeNotifier {
 
   /// Clears error state and re-fetches — wired to the Retry button.
   void retry() => loadBanners();
+
+  /// Public alias used by connectivity listeners to re-fetch after internet
+  /// is restored.  Identical to [retry] but semantically distinct at call sites.
+  void refreshBanners() => loadBanners();
 }

@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/network/connectivity_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/logger.dart';
+import 'widgets/network_guard.dart';
 import 'features/badge/data/remote/badge_api_service.dart';
 import 'features/badge/data/repository/badge_repository_impl.dart';
 import 'features/badge/domain/repositories/badge_repository.dart';
@@ -85,6 +87,11 @@ class _AppProviders extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        // ── Network connectivity (must be first — others may depend on it) ──
+        ChangeNotifierProvider<NetworkService>(
+          create: (_) => NetworkService()..init(),
+        ),
+
         // Single ApiService instance shared by all ViewModels
         Provider<ApiService>(create: (_) => ApiService()),
 
@@ -341,7 +348,7 @@ class MyApp extends StatelessWidget {
             ),
           );
         };
-        return child ?? const SizedBox.shrink();
+        return NetworkGuard(child: child ?? const SizedBox.shrink());
       },
     );
   }

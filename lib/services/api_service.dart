@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:async' as dart_async;
 import 'dart:convert';
 import 'dart:io';
@@ -11,6 +12,13 @@ import '../core/utils/logger.dart';
 
 class ApiService {
   static const _tag = 'ApiService';
+
+  // Fires whenever any API response returns HTTP 401.
+  // SessionViewModel subscribes to this to force-logout the user in real time,
+  // handling the case where another device's logout-all has revoked this token.
+  final StreamController<void> _unauthorizedController =
+      StreamController<void>.broadcast();
+  Stream<void> get onUnauthorized => _unauthorizedController.stream;
 
   Map<String, String> get _jsonHeaders => {'Content-Type': 'application/json'};
 
@@ -37,6 +45,15 @@ class ApiService {
   Map<String, dynamic> _decode(http.Response res, String label) {
     AppLogger.info(_tag, '$label → ${res.statusCode}');
     AppLogger.info(_tag, 'BODY: ${res.body}');           // ← full body logged
+
+    // 401 means the token has been revoked server-side (e.g. logout-all from
+    // another device).  Broadcast before throwing so SessionViewModel can
+    // react even if the immediate caller catches AppException.
+    if (res.statusCode == 401) {
+      AppLogger.warning(_tag, '$label → 401 Unauthorized — broadcasting forced logout');
+      _unauthorizedController.add(null);
+      throw const UnauthorizedException();
+    }
 
     if (res.body.trimLeft().startsWith('<!')) {
       AppLogger.error(_tag, '$label returned HTML — check URL / headers');
@@ -114,6 +131,8 @@ class ApiService {
 
   // ── Token ─────────────────────────────────────────────────────────────────
 
+  static const _refreshTokenKey = 'refresh_token';
+
   Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(AppConstants.tokenKey, token);
@@ -127,6 +146,21 @@ class ApiService {
   Future<void> clearToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(AppConstants.tokenKey);
+  }
+
+  Future<void> saveRefreshToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_refreshTokenKey, token);
+  }
+
+  Future<String?> getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_refreshTokenKey);
+  }
+
+  Future<void> clearRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_refreshTokenKey);
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -153,7 +187,9 @@ class ApiService {
       _post('/auth/validate-otp', {
         'phone': phone,
         'otp': otp,
-        'browsername': '',                    // empty string per developer docs
+        // Send platform name so the server records login_type as "iOS"/"Android"
+        // rather than "Web" (which it assigns when browsername is empty).
+        'browsername': Platform.isIOS ? 'iOS' : 'Android',
         'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
         'is_phone_verified': 1,
       });
@@ -165,7 +201,11 @@ class ApiService {
       _post('/auth/phone-login', {
         'phone': phone,                       // ← correct field name
         'is_phone_verified': 1,
-        'browsername': '',
+        // Sending the platform name (not an empty string) causes the server to
+        // store login_type as "iOS" or "Android" instead of "Web", which is
+        // required for correct device-limit detection and for the device popup
+        // to show the right icon and label.
+        'browsername': Platform.isIOS ? 'iOS' : 'Android',
         'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
       });
 
@@ -187,7 +227,7 @@ class ApiService {
       {
         'username':     username,
         'password':     password,
-        'browsername':  Platform.isIOS ? 'Safari' : 'Chrome',
+        'browsername':  Platform.isIOS ? 'iOS' : 'Android',
         'deviceDetail': Platform.isIOS ? 'iPhone' : 'Android',
         'login_type':   'password',
       },
@@ -310,4 +350,20 @@ class ApiService {
         '/common',
         overrideUrl: '${AppConstants.mediaBaseUrl}/common',
       );
+
+  /// Logs out device(s) during the phone-login flow.
+  /// POST /auth/logout-device
+  /// [username]   — server-side username field (e.g. "usr-5QovTsaghO"), NOT phone.
+  /// [deviceToken]— access_token of the device to remove.
+  /// [preference] — 1 for single device; "all" to remove every device at once.
+  Future<Map<String, dynamic>> logoutPhoneDevice({
+    required String username,
+    required String deviceToken,
+    Object preference = 1,
+  }) =>
+      _post('/auth/logout-device', {
+        'username': username,
+        'access_token': deviceToken,
+        'preference': preference,
+      });
 }

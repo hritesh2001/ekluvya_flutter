@@ -9,6 +9,8 @@ import '../../../../core/errors/app_exception.dart';
 import '../../../../core/utils/logger.dart';
 import '../../../../services/api_service.dart';
 import '../../../channel/data/models/video_item_model.dart';
+import '../../../rating/data/models/video_rating_model.dart';
+import '../../../rating/domain/repositories/rating_repository.dart';
 import '../../../watch_history/data/remote/watch_history_api_service.dart';
 import '../../../watch_history/presentation/viewmodel/watch_history_viewmodel.dart';
 import '../../data/models/watch_progress_model.dart';
@@ -30,12 +32,14 @@ class VideoPlayerViewModel extends ChangeNotifier {
     ApiService? remoteAuthApi,
     String profileId = '',
     WatchHistoryViewModel? watchHistoryVm,
+    RatingRepository? ratingRepo,
   })  : _progressService = progressService ?? WatchProgressService(),
         _headerResolver = headerResolver ?? PlaybackHeaderResolver(),
         _watchHistoryApi = watchHistoryApi,
         _remoteAuthApi = remoteAuthApi,
         _profileId = profileId,
-        _watchHistoryVm = watchHistoryVm;
+        _watchHistoryVm = watchHistoryVm,
+        _ratingRepo = ratingRepo;
 
   final WatchProgressService _progressService;
   final PlaybackHeaderResolver _headerResolver;
@@ -43,6 +47,7 @@ class VideoPlayerViewModel extends ChangeNotifier {
   final ApiService? _remoteAuthApi;
   final String _profileId;
   final WatchHistoryViewModel? _watchHistoryVm;
+  final RatingRepository? _ratingRepo;
 
   VideoPlayerState _state = VideoPlayerState.idle;
   String? _errorMessage;
@@ -64,6 +69,9 @@ class VideoPlayerViewModel extends ChangeNotifier {
 
   // ── Rating ─────────────────────────────────────────────────────────────────
   double _userRating = 0.0;
+  bool _isSubmittingRating = false;
+  VideoRatingModel? _videoRating; // community stats + user's own vote
+  String? _ratingError;
 
   // ── Getters ────────────────────────────────────────────────────────────────
   VideoPlayerState get state => _state;
@@ -78,6 +86,9 @@ class VideoPlayerViewModel extends ChangeNotifier {
   String get chapterName => _chapterName;
   VideoItemModel? get currentVideo => _video;
   double get userRating => _userRating;
+  bool get isSubmittingRating => _isSubmittingRating;
+  VideoRatingModel? get videoRating => _videoRating;
+  String? get ratingError => _ratingError;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -95,6 +106,76 @@ class VideoPlayerViewModel extends ChangeNotifier {
   void setUserRating(double rating) {
     _userRating = rating.clamp(0.0, 5.0);
     notifyListeners();
+  }
+
+  /// Submits a 1–5 star rating with optimistic UI update.
+  ///
+  /// Flow:
+  ///   1. Immediately update [userRating] and set [isSubmittingRating].
+  ///   2. POST to the rating API.
+  ///   3. On success → refresh [videoRating] with updated community stats.
+  ///   4. On failure → revert [userRating] and expose [ratingError].
+  Future<void> submitRating(int stars) async {
+    final video = _video;
+    final repo  = _ratingRepo;
+    if (video == null || repo == null) return;
+    if (_isSubmittingRating) return; // guard against double-tap
+    if (stars < 1 || stars > 5) return;
+
+    final prevRating = _userRating;
+    _userRating = stars.toDouble(); // optimistic
+    _isSubmittingRating = true;
+    _ratingError = null;
+    if (!_isDisposed) notifyListeners();
+
+    try {
+      final token = await _remoteAuthApi?.getToken() ?? '';
+      await repo.submitVideoRating(
+        token:           token,
+        masterDetailsId: video.id,
+        ratingPoints:    stars,
+      );
+      AppLogger.info(_tag, 'Rating submitted: $stars★ for ${video.id}');
+      // Background-refresh community stats; don't await — UI already updated.
+      unawaited(_fetchVideoRating(video.id));
+    } catch (e) {
+      AppLogger.warning(_tag, 'submitRating failed: $e');
+      _userRating  = prevRating; // revert optimistic update
+      _ratingError = 'Failed to submit rating. Please try again.';
+    } finally {
+      _isSubmittingRating = false;
+      if (!_isDisposed) notifyListeners();
+    }
+  }
+
+  void clearRatingError() {
+    if (_ratingError == null) return;
+    _ratingError = null;
+    if (!_isDisposed) notifyListeners();
+  }
+
+  /// Loads community stats + user's existing vote for [masterDetailsId].
+  /// Called automatically on [initialize] and after a successful submission.
+  Future<void> _fetchVideoRating(String masterDetailsId) async {
+    final repo = _ratingRepo;
+    if (repo == null || masterDetailsId.isEmpty) return;
+    try {
+      final token  = await _remoteAuthApi?.getToken() ?? '';
+      final result = await repo.fetchVideoRating(
+        masterDetailsId: masterDetailsId,
+        token:           token,
+      );
+      if (result != null && !_isDisposed) {
+        _videoRating = result;
+        // Pre-fill user's previous vote only when they haven't rated this session.
+        if (result.userRating > 0 && _userRating == 0) {
+          _userRating = result.userRating;
+        }
+        notifyListeners();
+      }
+    } catch (e) {
+      AppLogger.warning(_tag, '_fetchVideoRating failed: $e');
+    }
   }
 
   Future<void> initialize(
@@ -115,6 +196,12 @@ class VideoPlayerViewModel extends ChangeNotifier {
       return;
     }
 
+    // Reset rating state for the new video.
+    _userRating = 0.0;
+    _videoRating = null;
+    _ratingError = null;
+    _isSubmittingRating = false;
+
     // Cache episode thumbnail so watch history can show the correct image.
     // The watch-history API only returns series-level thumbnails via
     // master_details_id; the episode thumbnail lives here on VideoItemModel.
@@ -122,6 +209,9 @@ class VideoPlayerViewModel extends ChangeNotifier {
       videoId: video.id,
       thumbnailUrl: video.thumbnailUrl,
     ));
+
+    // Pre-load community rating and user's previous vote (fire-and-forget).
+    unawaited(_fetchVideoRating(video.id));
 
     final generation = ++_initializationGeneration;
     _setState(VideoPlayerState.loading);

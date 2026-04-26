@@ -10,6 +10,7 @@ import '../../../../core/utils/logger.dart';
 import '../../../../services/api_service.dart';
 import '../../../auth/presentation/viewmodel/session_viewmodel.dart';
 import '../../../channel/data/models/video_item_model.dart';
+import '../../../rating/domain/repositories/rating_repository.dart';
 import '../../../signed_cookie/domain/repositories/signed_cookie_repository.dart';
 import '../../../watch_history/data/remote/watch_history_api_service.dart';
 import '../../../watch_history/presentation/viewmodel/watch_history_viewmodel.dart';
@@ -85,6 +86,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       remoteAuthApi:   context.read<ApiService>(),
       profileId:       context.read<SessionViewModel>().defaultProfileId,
       watchHistoryVm:  _tryReadWatchHistoryVm(),
+      ratingRepo:      _tryReadRatingRepository(),
     );
     if (widget.playlist.isNotEmpty) {
       _vm.setPlaylist(
@@ -109,6 +111,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   WatchHistoryViewModel? _tryReadWatchHistoryVm() {
     try {
       return context.read<WatchHistoryViewModel>();
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
+  RatingRepository? _tryReadRatingRepository() {
+    try {
+      return context.read<RatingRepository>();
     } on ProviderNotFoundException {
       return null;
     }
@@ -1140,47 +1150,116 @@ class _RatingButton extends StatelessWidget {
   }
 }
 
-class _RatingSheet extends StatelessWidget {
+class _RatingSheet extends StatefulWidget {
   const _RatingSheet();
 
   @override
+  State<_RatingSheet> createState() => _RatingSheetState();
+}
+
+class _RatingSheetState extends State<_RatingSheet> {
+  // Tracks whether we were previously in a submitting state so we can detect
+  // the submitting→done transition and auto-dismiss on success.
+  bool _wasSubmitting = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Rate this video',
-            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 20),
-          Selector<VideoPlayerViewModel, double>(
-            selector: (_, vm) => vm.userRating,
-            builder: (ctx, rating, _) => Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (i) {
-                final star = i + 1;
-                return GestureDetector(
-                  onTap: () {
-                    context.read<VideoPlayerViewModel>().setUserRating(star.toDouble());
-                    Navigator.of(ctx).pop();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Icon(
-                      star <= rating ? Icons.star_rounded : Icons.star_border_rounded,
-                      color: Colors.amber,
-                      size: 40,
+    return Consumer<VideoPlayerViewModel>(
+      builder: (ctx, vm, _) {
+        // Detect submitting → done without error = success → auto-pop.
+        if (_wasSubmitting && !vm.isSubmittingRating && vm.ratingError == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && Navigator.canPop(context)) Navigator.of(context).pop();
+          });
+        }
+        _wasSubmitting = vm.isSubmittingRating;
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Handle ──────────────────────────────────────────────
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Title ────────────────────────────────────────────────
+              const Text(
+                'Rate this video',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ── Stars / spinner ──────────────────────────────────────
+              if (vm.isSubmittingRating)
+                const SizedBox(
+                  height: 44,
+                  child: Center(
+                    child: SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        color: Colors.amber,
+                        strokeWidth: 2.5,
+                      ),
                     ),
                   ),
-                );
-              }),
-            ),
+                )
+              else
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(5, (i) {
+                    final star = i + 1;
+                    final filled = star <= vm.userRating;
+                    return GestureDetector(
+                      onTap: () => ctx.read<VideoPlayerViewModel>().submitRating(star),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Icon(
+                          filled ? Icons.star_rounded : Icons.star_border_rounded,
+                          color: Colors.amber,
+                          size: 40,
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              const SizedBox(height: 12),
+
+              // ── Community rating ─────────────────────────────────────
+              if (vm.videoRating != null && vm.videoRating!.hasOverallRating)
+                Text(
+                  '${vm.videoRating!.overallRating.toStringAsFixed(1)} ★  ·  ${vm.videoRating!.formattedTotal} ratings',
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+
+              // ── Error ────────────────────────────────────────────────
+              if (vm.ratingError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  vm.ratingError!,
+                  style: const TextStyle(
+                    color: Color(0xFFEF5350),
+                    fontSize: 12,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: 16),
-        ],
-      ),
+        );
+      },
     );
   }
 }

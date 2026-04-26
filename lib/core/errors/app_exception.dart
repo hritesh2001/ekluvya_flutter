@@ -33,3 +33,10 @@ class ParseException extends AppException {
   const ParseException()
       : super('Unexpected server response. Please try again.');
 }
+
+/// Server returned HTTP 401 — token is invalid or has been revoked by
+/// a logout-all from another device.  Triggers forced client-side logout.
+class UnauthorizedException extends AppException {
+  const UnauthorizedException()
+      : super('Session expired. Please log in again.');
+}

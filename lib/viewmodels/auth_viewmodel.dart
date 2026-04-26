@@ -27,6 +27,13 @@ class AuthViewModel extends ChangeNotifier {
   String _loginProfilePictureUrl = '';
   // Active device sessions parsed from the login response.
   List<DeviceInfoModel> _activeDevices = [];
+  // Phone-login device-limit state (statusCode: 202).
+  bool _isPhoneDeviceLimited = false;
+  List<DeviceInfoModel> _phoneLoginDevices = [];
+  int _phoneDeviceLimit = 0;
+  // Server-side username field (e.g. "usr-5QovTsaghO") from the 202 response.
+  // Required by the logout-device API — distinct from the phone number.
+  String _loginApiUsername = '';
 
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -40,6 +47,17 @@ class AuthViewModel extends ChangeNotifier {
   /// Callers prepend the CDN base URL before rendering.
   String get loginProfilePictureUrl => _loginProfilePictureUrl;
   List<DeviceInfoModel> get activeDevices => List.unmodifiable(_activeDevices);
+
+  // ── Phone-login device-limit (statusCode: 202) ────────────────────────────
+  bool get isPhoneDeviceLimited => _isPhoneDeviceLimited;
+  List<DeviceInfoModel> get phoneLoginDevices =>
+      List.unmodifiable(_phoneLoginDevices);
+  int get phoneDeviceLimit => _phoneDeviceLimit;
+  /// Server-side username (e.g. "usr-5QovTsaghO") required by the
+  /// logout-device API.  Falls back to [loginUsername] (phone number) when the
+  /// field is absent from the server response.
+  String get loginApiUsername =>
+      _loginApiUsername.isNotEmpty ? _loginApiUsername : loginUsername;
 
   void _setLoading(bool val) {
     _isLoading = val;
@@ -170,25 +188,70 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   /// Completes the OTP flow (phone-login API). Saves token, returns true on success.
+  /// Returns false without setting [errorMessage] when the server responds with
+  /// statusCode 202 (device limit exceeded) — callers should check
+  /// [isPhoneDeviceLimited] to distinguish this case from a real error.
   /// Routing (home vs register) is decided by the caller using the `exists`
   /// flag from [identify] — NOT from the login response.
   Future<bool> phoneLogin(String phone) async {
     _setLoading(true);
     _errorMessage = null;
+    _isPhoneDeviceLimited = false;
     try {
       final res = await _api.phoneLogin(phone);
       AppLogger.info(_tag,
           'phoneLogin status=${res['status']} statusCode=${res['statusCode']}');
 
+      // Device-limit response: statusCode 202, contains get_devices list.
+      if (res['statusCode'] == 202 || res['statusCode'] == '202') {
+        final response = res['response'];
+        if (response is Map) {
+          final rawDevices = response['get_devices'];
+          _phoneLoginDevices = rawDevices is List
+              ? rawDevices
+                  .whereType<Map<String, dynamic>>()
+                  .map(DeviceInfoModel.fromJson)
+                  .toList()
+              : [];
+          _phoneDeviceLimit =
+              int.tryParse(response['device_limit']?.toString() ?? '') ??
+              _phoneLoginDevices.length;
+          // Store server-side username (e.g. "usr-5QovTsaghO") — this is what
+          // the logout-device API expects in the `username` field, NOT the phone.
+          _loginApiUsername = response['username']?.toString() ?? '';
+        }
+        _loginUsername = phone; // phone kept for display + retry call
+        _isPhoneDeviceLimited = true;
+        AppLogger.info(_tag,
+            'phoneLogin 202: devices=${_phoneLoginDevices.length} limit=$_phoneDeviceLimit');
+        notifyListeners();
+        return false;
+      }
+
       if (_isSuccess(res)) {
         final response = res['response'];
-        final token =
-            response is Map ? response['access_token']?.toString() : null;
+        if (response is Map) {
+          // Persist access token
+          final token = response['access_token']?.toString();
+          if (token != null && token.isNotEmpty) await _api.saveToken(token);
 
-        AppLogger.info(
-            _tag, 'token present: ${token != null && token.isNotEmpty}');
+          // Persist refresh token (phone-login returns it alongside access_token)
+          final refreshToken = response['refresh_token']?.toString();
+          if (refreshToken != null && refreshToken.isNotEmpty) {
+            await _api.saveRefreshToken(refreshToken);
+          }
 
-        if (token != null && token.isNotEmpty) await _api.saveToken(token);
+          // Extract subscription flag — consumed by seedSubscriptionFromLogin()
+          // in OtpScreen before runPostLoginFlow() starts.
+          final sub = response['is_user_subscribed'];
+          _isUserSubscribed = sub == true || sub == 1 || sub == '1';
+
+          AppLogger.info(
+            _tag,
+            'phoneLogin token=${token?.isNotEmpty == true} '
+            'is_user_subscribed=$_isUserSubscribed',
+          );
+        }
         return true;
       }
 

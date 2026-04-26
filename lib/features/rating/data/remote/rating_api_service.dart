@@ -8,6 +8,7 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/utils/logger.dart';
 import '../models/rating_model.dart';
+import '../models/video_rating_model.dart';
 
 /// HTTP layer for:
 ///   GET [mediaBaseUrl]/ratings/channel-ratings
@@ -76,6 +77,85 @@ class RatingApiService {
 
     AppLogger.info(_tag, 'Parsed ratings for ${data.length} channels');
     return data;
+  }
+
+  // ── Video rating ─────────────────────────────────────────────────────────────
+
+  /// POST /mediaview/api/v1/ratings/create
+  /// Submits a 1–5 star rating for a video.  Returns updated rating data on
+  /// success, null on non-fatal failure so the ViewModel can decide whether to
+  /// revert the optimistic update.
+  Future<VideoRatingModel?> submitVideoRating({
+    required String token,
+    required String masterDetailsId,
+    required int ratingPoints,
+  }) async {
+    final url = '${AppConstants.mediaBaseUrl}/ratings/create';
+    final body = jsonEncode({
+      'master_details_id': masterDetailsId,
+      'sho_type':          2,
+      'rating_points':     ratingPoints,
+    });
+    AppLogger.info(_tag, 'POST submit-rating → $url | id=$masterDetailsId pts=$ratingPoints');
+    try {
+      final res = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
+            body: body,
+          )
+          .timeout(AppConstants.apiTimeout);
+      AppLogger.info(_tag, 'submitVideoRating ${res.statusCode}: ${res.body}');
+      if (res.statusCode == 401) throw const UnauthorizedException();
+      if (res.body.trimLeft().startsWith('<!')) return null;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final ok = decoded['status'] == 'success' ||
+          (decoded['statusCode'] as num?)?.toInt() == 200 ||
+          (decoded['statusCode'] as num?)?.toInt() == 201;
+      if (!ok) {
+        AppLogger.warning(_tag, 'submitVideoRating rejected: ${decoded['message']}');
+        return null;
+      }
+      return VideoRatingModel.fromJson(decoded);
+    } on AppException {
+      rethrow; // let ViewModel revert the optimistic update
+    } catch (e, st) {
+      AppLogger.error(_tag, 'submitVideoRating error: $e', e, st);
+      return null;
+    }
+  }
+
+  /// GET /mediaview/api/v1/ratings/overall/{masterDetailsId}
+  /// Fetches the community-average rating and the current user's own vote.
+  /// Returns null on any failure (non-fatal — absence of rating data is safe).
+  Future<VideoRatingModel?> fetchVideoRating({
+    required String masterDetailsId,
+    String token = '',
+  }) async {
+    final url = '${AppConstants.mediaBaseUrl}/ratings/overall/$masterDetailsId';
+    AppLogger.info(_tag, 'GET overall-rating → $url');
+    try {
+      final res = await http
+          .get(
+            Uri.parse(url),
+            headers: token.isNotEmpty
+                ? {'Authorization': 'Bearer $token'}
+                : null,
+          )
+          .timeout(AppConstants.apiTimeout);
+      AppLogger.info(_tag, 'fetchVideoRating ${res.statusCode}: ${res.body}');
+      if (res.body.trimLeft().startsWith('<!')) return null;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      return VideoRatingModel.fromJson(decoded);
+    } catch (e, st) {
+      AppLogger.error(_tag, 'fetchVideoRating error: $e', e, st);
+      return null;
+    }
   }
 
   Never _handleError(Object e, StackTrace st) {

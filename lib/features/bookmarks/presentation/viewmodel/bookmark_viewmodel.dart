@@ -23,7 +23,9 @@ class BookmarkViewModel extends ChangeNotifier {
     required SessionViewModel sessionVM,
   })  : _api = bookmarkApi,
         _authApi = authApi,
-        _sessionVM = sessionVM;
+        _sessionVM = sessionVM {
+    _sessionVM.addListener(_onSessionChanged);
+  }
 
   final BookmarkApiService _api;
   final ApiService _authApi;
@@ -56,7 +58,11 @@ class BookmarkViewModel extends ChangeNotifier {
   List<BookmarkItemModel> get items => List.unmodifiable(_items);
   String? get error => _error;
 
-  bool isBookmarked(String episodeId) => _bookmarkedIds.contains(episodeId);
+  // Gates on session so the icon never shows filled for guests or non-subscribers.
+  bool isBookmarked(String episodeId) =>
+      _sessionVM.isLoggedIn &&
+      _sessionVM.isSubscribed &&
+      _bookmarkedIds.contains(episodeId);
 
   // ── Fetch bookmark list ────────────────────────────────────────────────────
 
@@ -242,5 +248,25 @@ class BookmarkViewModel extends ChangeNotifier {
     _state = BookmarkLoadState.error;
     _error = msg;
     notifyListeners();
+  }
+
+  // Clears cached bookmark state when the user logs out or loses subscription,
+  // so cards immediately show the empty bookmark icon.
+  void _onSessionChanged() {
+    if (!_sessionVM.isLoggedIn || !_sessionVM.isSubscribed) {
+      _bookmarkedIds.clear();
+      _items.clear();
+      _state = BookmarkLoadState.initial;
+      _page = 1;
+      _hasMore = true;
+      notifyListeners();
+      AppLogger.info(_tag, '_onSessionChanged: session lost — bookmark state cleared');
+    }
+  }
+
+  @override
+  void dispose() {
+    _sessionVM.removeListener(_onSessionChanged);
+    super.dispose();
   }
 }

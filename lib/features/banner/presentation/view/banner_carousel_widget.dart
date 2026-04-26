@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../../core/network/connectivity_service.dart';
 import '../../../../../core/theme/app_theme.dart';
 import '../../../../../core/utils/logger.dart';
 import '../../data/models/banner_model.dart';
@@ -31,6 +32,11 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
   Timer? _autoScrollTimer;
   int _currentPage = 0;
 
+  NetworkService? _networkService;
+  // Incremented on each connectivity-triggered reload so CachedNetworkImage
+  // creates fresh instances instead of reusing a previously failed widget.
+  int _imageVersion = 0;
+
   static const _autoScrollInterval = Duration(seconds: 5);
   static const _slideDuration = Duration(milliseconds: 450);
 
@@ -51,9 +57,12 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final vm = context.read<BannerViewModel>();
-      // Listen for the first loaded state to kick off auto-scroll exactly once.
       vm.addListener(_onBannerVmChange);
       vm.loadBanners();
+
+      // Auto-reload banners when internet is restored after a failure.
+      _networkService = context.read<NetworkService>();
+      _networkService!.addListener(_onConnectivityChanged);
     });
   }
 
@@ -68,10 +77,23 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
     }
   }
 
+  void _onConnectivityChanged() {
+    if (!mounted) return;
+    final ns = _networkService;
+    if (ns == null || !ns.isOnline) return;
+
+    final vm = context.read<BannerViewModel>();
+    if (!vm.hasError && !vm.isEmpty) return; // nothing to fix
+
+    // Bust CachedNetworkImage's in-memory failed state before reloading.
+    setState(() => _imageVersion++);
+    vm.refreshBanners();
+  }
+
   @override
   void dispose() {
-    // Remove the ViewModel listener to prevent callbacks after disposal.
     context.read<BannerViewModel>().removeListener(_onBannerVmChange);
+    _networkService?.removeListener(_onConnectivityChanged);
     _autoScrollTimer?.cancel();
     _pageController.dispose();
     super.dispose();
@@ -107,44 +129,25 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
 
   // ── Fallback states ───────────────────────────────────────────────────────
 
-  Widget _buildError(
-      String? message, VoidCallback onRetry, AppColors colors, double height) {
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: colors.errorSurface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colors.brand.withValues(alpha: 0.25)),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.wifi_off_rounded, size: 36, color: colors.brand),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              message ?? 'Failed to load banners',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: colors.metaText),
-            ),
+  // Minimal fixed-height placeholder shown when banners fail to load.
+  // The global NetworkGuard popup handles the user-facing error UX —
+  // this widget just holds the banner's space without overflowing.
+  Widget _buildError(VoidCallback onRetry, AppColors colors, double height) {
+    return GestureDetector(
+      onTap: onRetry,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: colors.imagePlaceholder,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Icon(
+            Icons.wifi_off_rounded,
+            size: 28,
+            color: colors.metaText.withValues(alpha: 0.45),
           ),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('Retry'),
-            style: FilledButton.styleFrom(
-              backgroundColor: colors.brand,
-              foregroundColor: Colors.white,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              textStyle: const TextStyle(fontSize: 13),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -199,9 +202,10 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
           // Full image — no overlay, no text, no gradient on top.
           child: banner.bannerImg.isNotEmpty
               ? CachedNetworkImage(
+                  // Key changes on each connectivity-triggered reload so Flutter
+                  // creates a fresh widget instead of reusing a failed one.
+                  key: ValueKey('${banner.fullImageUrl}_$_imageVersion'),
                   imageUrl: banner.fullImageUrl,
-                  // BoxFit.contain → entire image visible, no cropping.
-                  // BoxFit.cover would always crop to fill the fixed height.
                   fit: BoxFit.contain,
                   placeholder: (_, url) => BannerShimmerWidget(height: height),
                   errorWidget: (_, url, err) {
@@ -209,6 +213,7 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
                         'BannerCarousel', 'Image failed → ${banner.fullImageUrl}');
                     return _imageFallback(colors, height);
                   },
+                  fadeInDuration: const Duration(milliseconds: 200),
                 )
               : _imageFallback(colors, height),
         ),
@@ -282,7 +287,7 @@ class _BannerCarouselWidgetState extends State<BannerCarouselWidget> {
       builder: (context, vm, _) {
         if (vm.isLoading) return BannerShimmerWidget(height: height);
         if (vm.hasError) {
-          return _buildError(vm.errorMessage, vm.retry, colors, height);
+          return _buildError(vm.retry, colors, height);
         }
         if (vm.isEmpty) return _buildEmpty(colors, height);
         if (vm.hasData) return _buildCarousel(vm.banners, height, colors);

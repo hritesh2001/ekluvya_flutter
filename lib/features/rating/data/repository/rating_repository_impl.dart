@@ -1,6 +1,7 @@
 import '../../../../core/utils/logger.dart';
 import '../../domain/repositories/rating_repository.dart';
 import '../models/rating_model.dart';
+import '../models/video_rating_model.dart';
 import '../remote/rating_api_service.dart';
 
 class RatingRepositoryImpl implements RatingRepository {
@@ -52,6 +53,50 @@ class RatingRepositoryImpl implements RatingRepository {
       rethrow;
     } finally {
       _inFlight.remove(key);
+    }
+  }
+
+  // ── Video rating ─────────────────────────────────────────────────────────────
+
+  // Per-video cache: invalidated after each successful submission.
+  final Map<String, VideoRatingModel> _videoRatingCache = {};
+
+  @override
+  Future<VideoRatingModel?> submitVideoRating({
+    required String token,
+    required String masterDetailsId,
+    required int ratingPoints,
+  }) async {
+    // Intentionally no cache read — submissions always hit the server.
+    final result = await _api.submitVideoRating(
+      token: token,
+      masterDetailsId: masterDetailsId,
+      ratingPoints: ratingPoints,
+    );
+    // Invalidate so the next fetchVideoRating gets fresh data.
+    _videoRatingCache.remove(masterDetailsId);
+    AppLogger.info(_tag, 'submitVideoRating ok: id=$masterDetailsId pts=$ratingPoints');
+    return result;
+    // Throws propagate to ViewModel so it can revert the optimistic update.
+  }
+
+  @override
+  Future<VideoRatingModel?> fetchVideoRating({
+    required String masterDetailsId,
+    String token = '',
+  }) async {
+    final cached = _videoRatingCache[masterDetailsId];
+    if (cached != null) return cached;
+    try {
+      final result = await _api.fetchVideoRating(
+        masterDetailsId: masterDetailsId,
+        token: token,
+      );
+      if (result != null) _videoRatingCache[masterDetailsId] = result;
+      return result;
+    } catch (e) {
+      AppLogger.warning(_tag, 'fetchVideoRating repo failed: $e');
+      return null;
     }
   }
 }
