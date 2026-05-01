@@ -164,6 +164,7 @@ class _ContentCardWidgetState extends State<ContentCardWidget> {
                                 episodeId: widget.episodeId,
                                 seasonId: widget.seasonId,
                                 title: widget.title,
+                                accessStatus: widget.accessStatus,
                               )
                             : GestureDetector(
                                 onTap: () => setState(
@@ -246,11 +247,13 @@ class _BookmarkButton extends StatelessWidget {
     required this.episodeId,
     required this.seasonId,
     required this.title,
+    required this.accessStatus,
   });
 
   final String episodeId;
   final String seasonId;
   final String title;
+  final VideoAccessStatus accessStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -260,6 +263,12 @@ class _BookmarkButton extends StatelessWidget {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () async {
+            // Locked videos redirect to subscription instead of toggling.
+            if (accessStatus.needsSubscription) {
+              Navigator.of(context).push(SubscriptionPlansScreen.route(context));
+              return;
+            }
+
             final vm = context.read<BookmarkViewModel>();
             // Capture state BEFORE toggle to know which action was performed.
             final wasBookmarked = vm.isBookmarked(episodeId);
@@ -271,11 +280,6 @@ class _BookmarkButton extends StatelessWidget {
             switch (result) {
               case BookmarkToggleResult.requiresLogin:
                 Navigator.pushNamed(context, '/login');
-              case BookmarkToggleResult.requiresSubscription:
-                Navigator.push(
-                  context,
-                  SubscriptionPlansScreen.route(context),
-                );
               case BookmarkToggleResult.success:
                 final label = title.trim().isEmpty ? 'Video' : title.trim();
                 final action = wasBookmarked ? 'Bookmark Removed' : 'Bookmark Added';

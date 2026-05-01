@@ -16,10 +16,13 @@ class UserProfileDetailModel {
     this.email = '',
     this.admissionNumber = '',
     this.schoolCode = '',
+    this.schoolName = '',
+    this.schoolAddress = '',
     this.branch = '',
     this.className = '',
     this.section = '',
     this.preparingFor = '',
+    this.userType = '',
   });
 
   // ── Common fields ───────────────────────────────────────────────────────────
@@ -37,10 +40,17 @@ class UserProfileDetailModel {
   // ── Student-only fields (admission-number login) ────────────────────────────
   final String admissionNumber;
   final String schoolCode;
+  final String schoolName;
+  final String schoolAddress;
   final String branch;
   final String className;
   final String section;
   final String preparingFor;
+
+  /// Raw value from API — e.g. "b2b", "b2c", "regular".
+  final String userType;
+
+  bool get isB2b => userType.toLowerCase() == 'b2b';
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -107,10 +117,13 @@ class UserProfileDetailModel {
       email: s('email'),
       admissionNumber: s('admission_number'),
       schoolCode: s('school_code'),
+      schoolName: s('school_name'),
+      schoolAddress: s('school_address'),
       branch: s('branch'),
       className: className,
       section: s('section'),
       preparingFor: s('preparing_for'),
+      userType: s('user_type'),
     );
   }
 

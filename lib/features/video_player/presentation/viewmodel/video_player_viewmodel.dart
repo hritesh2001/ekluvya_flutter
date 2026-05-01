@@ -583,11 +583,43 @@ class VideoPlayerViewModel extends ChangeNotifier {
     _cancelInitializationTimeout();
     _saveTimer?.cancel();
     _saveTimer = null;
+
+    // Capture playback position synchronously BEFORE _disposeController nulls
+    // out the controller. Using a local copy guarantees we read a valid value
+    // even though the rest of dispose runs after us in the event queue.
+    final video       = _video;
+    final capturedPos =
+        _controller?.videoPlayerController?.value.position.inSeconds ?? 0;
+
     _controller?.pause();
-    unawaited(_saveCurrentProgress());
     _disposeController();
-    // Refresh My History so the just-watched video appears immediately
-    _watchHistoryVm?.refreshWatchHistory();
+
+    final histVm = _watchHistoryVm;
+
+    // Post the final position (if it moved since the last timer tick), then
+    // refresh history AFTER the POST so the backend entry exists before the
+    // fetch runs. Without this sequencing the refresh races the write and the
+    // new entry is invisible until the user manually revisits the History tab.
+    unawaited(() async {
+      if (video != null &&
+          video.id.isNotEmpty &&
+          capturedPos > 0 &&
+          capturedPos != _lastSavedPosition) {
+        await _progressService.saveProgress(
+          videoId:         video.id,
+          positionSeconds: capturedPos,
+          durationSeconds: video.durationSeconds,
+        );
+        await _postRemoteWatchHistory(
+          mediaId:        video.id,
+          positionSeconds: capturedPos,
+        );
+      }
+      // Always refresh — even when no new save is needed the timer's earlier
+      // POSTs should already be on the backend by the time we close.
+      histVm?.refreshWatchHistory();
+    }());
+
     super.dispose();
   }
 }

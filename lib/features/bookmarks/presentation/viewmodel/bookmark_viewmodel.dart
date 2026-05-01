@@ -12,7 +12,8 @@ enum BookmarkLoadState { initial, loading, loaded, error }
 
 /// Result returned by [BookmarkViewModel.requestToggle] so the widget layer
 /// can handle redirects without coupling the ViewModel to navigation.
-enum BookmarkToggleResult { success, requiresLogin, requiresSubscription, error }
+/// NOTE: Bookmark actions are login-gated only — subscription state is irrelevant.
+enum BookmarkToggleResult { success, requiresLogin, error }
 
 class BookmarkViewModel extends ChangeNotifier {
   static const _tag = 'BookmarkViewModel';
@@ -58,11 +59,9 @@ class BookmarkViewModel extends ChangeNotifier {
   List<BookmarkItemModel> get items => List.unmodifiable(_items);
   String? get error => _error;
 
-  // Gates on session so the icon never shows filled for guests or non-subscribers.
+  // Bookmark visibility is login-gated only — subscription state is irrelevant.
   bool isBookmarked(String episodeId) =>
-      _sessionVM.isLoggedIn &&
-      _sessionVM.isSubscribed &&
-      _bookmarkedIds.contains(episodeId);
+      _sessionVM.isLoggedIn && _bookmarkedIds.contains(episodeId);
 
   // ── Fetch bookmark list ────────────────────────────────────────────────────
 
@@ -145,11 +144,7 @@ class BookmarkViewModel extends ChangeNotifier {
       AppLogger.info(_tag, 'requestToggle: not logged in');
       return BookmarkToggleResult.requiresLogin;
     }
-
-    if (!_sessionVM.isSubscribed) {
-      AppLogger.info(_tag, 'requestToggle: not subscribed');
-      return BookmarkToggleResult.requiresSubscription;
-    }
+    // No subscription gate — bookmark add/remove must always work for logged-in users.
 
     // ── Optimistic update ────────────────────────────────────────────────────
 
@@ -250,17 +245,17 @@ class BookmarkViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Clears cached bookmark state when the user logs out or loses subscription,
-  // so cards immediately show the empty bookmark icon.
+  // Clears cached bookmark state on logout only.
+  // Subscription changes do NOT clear bookmarks — bookmarks are login-gated only.
   void _onSessionChanged() {
-    if (!_sessionVM.isLoggedIn || !_sessionVM.isSubscribed) {
+    if (!_sessionVM.isLoggedIn) {
       _bookmarkedIds.clear();
       _items.clear();
       _state = BookmarkLoadState.initial;
       _page = 1;
       _hasMore = true;
       notifyListeners();
-      AppLogger.info(_tag, '_onSessionChanged: session lost — bookmark state cleared');
+      AppLogger.info(_tag, '_onSessionChanged: logged out — bookmark state cleared');
     }
   }
 

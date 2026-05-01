@@ -8,14 +8,20 @@ class TransactionModel {
     required this.transactionId,
     required this.statusDisplay,
     required this.endDate,
+    this.couponCode = '',
+    this.couponDiscountDisplay = '',
   });
 
   final String id;
   final String planName;
-  final String amountDisplay; // e.g. "₹ 117"
-  final String transactionId; // gudsho_receipt
-  final String statusDisplay; // e.g. "Success"
+  final String amountDisplay;        // e.g. "₹ 117"
+  final String transactionId;        // gudsho_receipt
+  final String statusDisplay;        // e.g. "Success"
   final DateTime? endDate;
+  final String couponCode;           // couponData.coupon_text
+  final String couponDiscountDisplay; // e.g. "₹ 29"
+
+  bool get hasCoupon => couponCode.isNotEmpty;
 
   /// Whole days remaining until expiry, comparing date-only (time ignored).
   /// Returns negative when expired.
@@ -74,13 +80,29 @@ class TransactionModel {
     final statusDisplay =
         (status == 2 || status == '2') ? 'Success' : s(status);
 
+    // couponData — optional; may be null or absent
+    final couponRaw = json['couponData'];
+    final Map<String, dynamic> couponMap =
+        couponRaw is Map<String, dynamic> ? couponRaw : const {};
+
+    final couponCode = s(couponMap['coupon_text']);
+
+    final String couponDiscountDisplay = () {
+      final raw = couponMap['coupon_discount_amount'];
+      if (raw is! num) return '';
+      final rupees = raw.toDouble() / 100;
+      return rupees % 1 == 0 ? '₹ ${rupees.toInt()}' : '₹ ${rupees.toStringAsFixed(2)}';
+    }();
+
     return TransactionModel(
-      id:            s(json['_id']),
-      planName:      s(subMap['name'] ?? subMap['subscription_name']),
-      amountDisplay: amountDisplay,
-      transactionId: s(json['gudsho_receipt'] ?? json['order_id']),
-      statusDisplay: statusDisplay,
-      endDate:       parseDate(subMap['end_date']),
+      id:                     s(json['_id']),
+      planName:               s(subMap['name'] ?? subMap['subscription_name']),
+      amountDisplay:          amountDisplay,
+      transactionId:          s(json['gudsho_receipt'] ?? json['order_id']),
+      statusDisplay:          statusDisplay,
+      endDate:                parseDate(subMap['end_date']),
+      couponCode:             couponCode,
+      couponDiscountDisplay:  couponDiscountDisplay,
     );
   }
 }

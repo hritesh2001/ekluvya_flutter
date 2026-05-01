@@ -97,7 +97,7 @@ class WatchHistoryApiService {
 
     AppLogger.info(_tag, 'POST $uri — media=$mediaId pos=${watchedDuration}s');
 
-    await http
+    final response = await http
         .post(
           uri,
           headers: {
@@ -105,13 +105,21 @@ class WatchHistoryApiService {
             HttpHeaders.contentTypeHeader: 'application/json',
           },
           body: json.encode({
-            'media_id': mediaId,
+            'media_id':        mediaId,
             'watched_duration': watchedDuration,
-            'play_time': playTime,
-            'profile_id': profileId,
+            'play_time':        playTime,
+            'profile_id':       profileId,
           }),
         )
         .timeout(AppConstants.apiTimeout);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      AppLogger.warning(
+        _tag,
+        'postWatchHistory [${response.statusCode}] media=$mediaId — '
+        'body: ${response.body}',
+      );
+    }
   }
 
   // ── Clear all ──────────────────────────────────────────────────────────────

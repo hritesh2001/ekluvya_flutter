@@ -3,6 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../../widgets/custom_bottom_nav_bar.dart';
+import '../../../../core/utils/logger.dart';
+import '../../../../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../../../../services/api_service.dart';
+import '../../../../features/signed_cookie/presentation/viewmodel/signed_cookie_viewmodel.dart';
+import '../../../../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../../../../features/video_access/domain/entities/video_access_status.dart';
+import '../../../../features/video_access/domain/usecases/check_video_access_usecase.dart';
+import '../../../../features/video_player/data/remote/watch_api_service.dart';
+import '../../../../features/video_player/presentation/view/video_player_screen.dart';
 import '../../data/models/search_result_model.dart';
 import '../viewmodel/search_viewmodel.dart';
 
@@ -356,62 +365,202 @@ class _ResultsList extends StatelessWidget {
 
 // ── Single result row ─────────────────────────────────────────────────────────
 
-class _ResultRow extends StatelessWidget {
+class _ResultRow extends StatefulWidget {
   const _ResultRow({super.key, required this.item});
 
   final SearchResultModel item;
 
   @override
+  State<_ResultRow> createState() => _ResultRowState();
+}
+
+class _ResultRowState extends State<_ResultRow> {
+  static const _tag = '_ResultRow';
+  final _watchApi = WatchApiService();
+  bool _isLoading = false;
+
+  Future<void> _onTap() async {
+    if (_isLoading) return;
+
+    final item = widget.item;
+    AppLogger.info(_tag,
+        'TAP id="${item.id}" slug="${item.slug}" title="${item.title}"');
+
+    if (item.slug.isEmpty) {
+      AppLogger.warning(_tag, 'No slug available — cannot play');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No playable content found for this result.')),
+      );
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isLoading = true);
+
+    try {
+      // Read providers inside try so ProviderNotFoundException is caught too.
+      final sessionVM = context.read<SessionViewModel>();
+      final accessUC  = context.read<CheckVideoAccessUseCase>();
+      final cookieVM  = context.read<SignedCookieViewModel>();
+      final apiService = context.read<ApiService>();
+      final nav       = Navigator.of(context);
+
+      // Fetch auth token — needed for subscription-aware server response.
+      final token = await apiService.getToken() ?? '';
+
+      // Fetch full episode: HLS URL + monetization.
+      // Endpoint: GET /mediaview/api/v1/watch/series/series-data/{slug}
+      final video = await _watchApi.fetchEpisode(item.slug, token: token);
+      if (!mounted) return;
+
+      AppLogger.info(_tag,
+          'Episode OK — id="${video.id}" hls=${video.hlsUrl.isNotEmpty} '
+          'monetization=${video.monetization}');
+
+      if (video.hlsUrl.isEmpty) {
+        AppLogger.warning(_tag, 'Episode returned no HLS URL');
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Video not available. Please try again.')),
+        );
+        return;
+      }
+
+      // episodeIndex:1 lets monetization rules apply.
+      // (index 0 unconditionally bypasses all access checks.)
+      final status = accessUC(
+        episodeIndex: 1,
+        isLoggedIn:   sessionVM.isLoggedIn,
+        isSubscribed: sessionVM.isSubscribed,
+        monetization: video.monetization,
+      );
+      AppLogger.info(_tag, 'Access status: $status');
+
+      switch (status) {
+        case VideoAccessStatus.free:
+        case VideoAccessStatus.unlocked:
+          await nav.push(
+            VideoPlayerScreen.route(video, headers: cookieVM.cookieMap),
+          );
+        case VideoAccessStatus.requiresLogin:
+          sessionVM.setPendingVideo(video, cookieVM.cookieMap);
+          nav.pushNamed('/login');
+        case VideoAccessStatus.requiresSubscription:
+          nav.push(SubscriptionPlansScreen.route(context));
+      }
+    } catch (e, st) {
+      AppLogger.error(_tag, 'Search tap error for slug="${item.slug}"', e, st);
+      if (!mounted) return;
+      // Show the actual error so we can diagnose it.
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Error: $msg'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 6),
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // ── Thumbnail ──────────────────────────────────────────────
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: SizedBox(
-              width: 110,
-              height: 65,
-              child: item.thumbnailUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: item.thumbnailUrl,
-                      fit: BoxFit.cover,
-                      fadeInDuration: const Duration(milliseconds: 150),
-                      fadeOutDuration: Duration.zero,
-                      placeholder: (_, _) => const ColoredBox(
-                        color: Color(0xFFE8E8E8),
+    final isSubscribed = context.watch<SessionViewModel>().isSubscribed;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _isLoading ? null : _onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // ── Thumbnail + overlays ───────────────────────────────────
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                width: 110,
+                height: 65,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Thumbnail image
+                    widget.item.thumbnailUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: widget.item.thumbnailUrl,
+                            fit: BoxFit.cover,
+                            fadeInDuration: const Duration(milliseconds: 150),
+                            fadeOutDuration: Duration.zero,
+                            placeholder: (_, _) => const ColoredBox(
+                              color: Color(0xFFE8E8E8),
+                            ),
+                            errorWidget: (_, _, _) => const _ThumbFallback(),
+                          )
+                        : const _ThumbFallback(),
+
+                    // Lock overlay for unsubscribed users
+                    if (!isSubscribed && !_isLoading)
+                      const ColoredBox(
+                        color: Color(0x66000000),
+                        child: Center(
+                          child: Icon(
+                            Icons.lock_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
                       ),
-                      errorWidget: (_, _, _) => const _ThumbFallback(),
-                    )
-                  : const _ThumbFallback(),
-            ),
-          ),
-          const SizedBox(width: 12),
-          // ── Text ───────────────────────────────────────────────────
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _titleColor,
-                    height: 1.35,
-                  ),
+
+                    // Loading spinner while fetching episode data
+                    if (_isLoading)
+                      const ColoredBox(
+                        color: Color(0x80000000),
+                        child: Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                const SizedBox(height: 6),
-                const _SeriesBadge(),
-              ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            // ── Title + badge ──────────────────────────────────────────
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _titleColor,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const _SeriesBadge(),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -25,6 +25,12 @@ class AuthViewModel extends ChangeNotifier {
   bool _isUserSubscribed = false;
   // Relative profile picture path from the login response.
   String _loginProfilePictureUrl = '';
+  // user_type from the login response (e.g. "b2b", "b2c").
+  String _loginUserType = '';
+  // School / class fields from the student-login response.
+  String _loginClassName = '';
+  String _loginSchoolName = '';
+  String _loginSchoolAddress = '';
   // Active device sessions parsed from the login response.
   List<DeviceInfoModel> _activeDevices = [];
   // Phone-login device-limit state (statusCode: 202).
@@ -46,6 +52,12 @@ class AuthViewModel extends ChangeNotifier {
   /// Relative profile picture path from the login response (e.g. "images/…").
   /// Callers prepend the CDN base URL before rendering.
   String get loginProfilePictureUrl => _loginProfilePictureUrl;
+
+  /// Raw `user_type` from the student-login response (e.g. "b2b", "b2c").
+  String get loginUserType => _loginUserType;
+  String get loginClassName => _loginClassName;
+  String get loginSchoolName => _loginSchoolName;
+  String get loginSchoolAddress => _loginSchoolAddress;
   List<DeviceInfoModel> get activeDevices => List.unmodifiable(_activeDevices);
 
   // ── Phone-login device-limit (statusCode: 202) ────────────────────────────
@@ -294,6 +306,14 @@ class AuthViewModel extends ChangeNotifier {
           // Profile picture — relative path, CDN base prepended by caller.
           _loginProfilePictureUrl =
               (response['profile_picture'] ?? '').toString().trim();
+
+          // user_type — e.g. "b2b" for institution-enrolled students.
+          _loginUserType = (response['user_type'] ?? '').toString().trim();
+          // class may come as 'class' or 'class_name'
+          final rawClass = response['class_name'] ?? response['class'];
+          _loginClassName = (rawClass ?? '').toString().trim();
+          _loginSchoolName = (response['school_name'] ?? '').toString().trim();
+          _loginSchoolAddress = (response['school_address'] ?? '').toString().trim();
 
           // Cache credentials for re-login after device logout.
           _loginUsername = username;

@@ -62,12 +62,15 @@ class EditProfileViewModel extends ChangeNotifier {
   // Student-only (admission-number login)
   String _admissionNumber = '';
   String _schoolCode = '';
+  String _schoolName = '';
+  String _schoolAddress = '';
   String _branch = '';
   String _className = '';
   String _section = '';
   String _preparingFor = '';
 
   bool _isStudent = false;
+  String _userType = '';
 
   SubscriptionPlanModel? _plan;
 
@@ -83,17 +86,15 @@ class EditProfileViewModel extends ChangeNotifier {
   String get profilePictureUrl => _profilePictureUrl;
   File? get pendingImage => _pendingImage;
   bool get isStudent => _isStudent;
+  bool get isB2b => _userType.toLowerCase() == 'b2b';
   SubscriptionPlanModel? get plan => _plan;
 
   String get fullName => '$_firstName $_lastName'.trim();
 
   String get avatarDisplayName {
     final n = fullName;
-    final u = _username;
-    if (n.isEmpty && u.isEmpty) return '';
-    if (n.isEmpty) return u;
-    if (u.isEmpty) return n;
-    return '$n $u';
+    if (n.isNotEmpty) return n;
+    return _username;
   }
 
   /// Prepends CDN base URL when the path from the API is relative.
@@ -119,6 +120,8 @@ class EditProfileViewModel extends ChangeNotifier {
   /// Used by the dynamic form builder to populate each row.
   String fieldValue(String key) {
     switch (key) {
+      case 'full_name':
+        return fullName;
       case 'first_name':
         return _firstName;
       case 'last_name':
@@ -133,10 +136,16 @@ class EditProfileViewModel extends ChangeNotifier {
         return _dob;
       case 'gender':
         return genderDisplay;
+      case 'student_id_b2b':
+        return _admissionNumber.isNotEmpty ? _admissionNumber : _username;
       case 'admission_number':
         return _admissionNumber;
       case 'school_code':
         return _schoolCode;
+      case 'school_name':
+        return _schoolName;
+      case 'school_address':
+        return _schoolAddress;
       case 'branch':
         return _branch;
       case 'class_name':
@@ -241,6 +250,18 @@ class EditProfileViewModel extends ChangeNotifier {
     return fields;
   }
 
+  /// B2B variant — fixed order, all read-only; no save/delete actions.
+  /// Always returns all 7 fields; screen applies '-' fallback for empty values.
+  List<ProfileFieldConfig> buildFieldListB2b() => const [
+    ProfileFieldConfig(key: 'full_name',       label: 'Name',           type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'student_id_b2b',  label: 'Student ID',     type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'class_name',       label: 'Class',          type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'school_name',      label: 'School Name',    type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'school_address',   label: 'School Address', type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'dob',              label: 'DOB (DD/MM/YYYY)', type: ProfileFieldType.readOnly),
+    ProfileFieldConfig(key: 'gender',           label: 'Gender',         type: ProfileFieldType.readOnly),
+  ];
+
   // ── Setters ────────────────────────────────────────────────────────────────
 
   void setFirstName(String v) {
@@ -307,11 +328,14 @@ class EditProfileViewModel extends ChangeNotifier {
       _email = profile.email;
       _admissionNumber = profile.admissionNumber;
       _schoolCode = profile.schoolCode;
+      _schoolName = profile.schoolName;
+      _schoolAddress = profile.schoolAddress;
       _branch = profile.branch;
       _className = profile.className;
       _section = profile.section;
       _preparingFor = profile.preparingFor;
       _isStudent = profile.isStudent;
+      _userType = profile.userType;
 
       final subJson = results[1];
       AppLogger.info(_tag, 'subscription raw: $subJson');

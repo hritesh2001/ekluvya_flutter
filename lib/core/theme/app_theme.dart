@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppColors — custom ThemeExtension for brand-specific tokens that live
@@ -167,15 +168,17 @@ abstract final class AppTheme {
             borderRadius: BorderRadius.all(Radius.circular(10)),
           ),
         ),
-        textTheme: const TextTheme(
-          titleMedium: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1A1A1A),
-          ),
-          bodySmall: TextStyle(
-            fontSize: 12,
-            color: Color(0xFF9E9E9E),
+        textTheme: GoogleFonts.poppinsTextTheme(
+          const TextTheme(
+            titleMedium: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1A1A1A),
+            ),
+            bodySmall: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF9E9E9E),
+            ),
           ),
         ),
         extensions: const [AppColors.light],
@@ -207,15 +210,17 @@ abstract final class AppTheme {
             borderRadius: BorderRadius.all(Radius.circular(10)),
           ),
         ),
-        textTheme: const TextTheme(
-          titleMedium: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-          bodySmall: TextStyle(
-            fontSize: 12,
-            color: Color(0xFF9E9E9E),
+        textTheme: GoogleFonts.poppinsTextTheme(
+          const TextTheme(
+            titleMedium: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            bodySmall: TextStyle(
+              fontSize: 12,
+              color: Color(0xFF9E9E9E),
+            ),
           ),
         ),
         extensions: const [AppColors.dark],

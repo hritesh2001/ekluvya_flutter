@@ -13,6 +13,7 @@ import 'subscription_redirect_screen.dart';
 
 const _kPink       = Color(0xFFE91E63);
 const _kOrange     = Color(0xFFFF5722);
+const _kGold       = Color(0xFFFFD700);
 const _kGreen      = Color(0xFF22C55E);
 const _kGreenBorder = Color(0xFF22C55E);
 const _kGreyBorder = Color(0xFFE5E5E5);
@@ -31,13 +32,22 @@ class SubscriptionPlansScreen extends StatelessWidget {
   const SubscriptionPlansScreen({super.key});
 
   static Route<void> route(BuildContext outerContext) =>
-      MaterialPageRoute<void>(
-        builder: (_) => ChangeNotifierProvider(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, _, _) => ChangeNotifierProvider(
           create: (_) => SubscriptionViewModel(
             authApi: outerContext.read<ApiService>(),
           )..load(),
           child: const SubscriptionPlansScreen(),
         ),
+        transitionsBuilder: (_, animation, _, child) => SlideTransition(
+          position: animation.drive(
+            Tween(begin: const Offset(1.0, 0.0), end: Offset.zero)
+                .chain(CurveTween(curve: Curves.easeOutCubic)),
+          ),
+          child: child,
+        ),
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
       );
 
   @override
@@ -64,7 +74,13 @@ class _PlansView extends StatelessWidget {
             // ── Header ─────────────────────────────────────────────────
             _Header(topPad: topPad),
 
-            // ── Dashed divider ─────────────────────────────────────────
+            // ── Subtitle (always visible, not part of scroll) ──────────
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 12, 20, 12),
+              child: _Subtitle(),
+            ),
+
+            // ── Dashed divider — below subtitle ────────────────────────
             const _DashedDivider(),
 
             // ── Scrollable body ────────────────────────────────────────
@@ -137,10 +153,6 @@ class _PlansView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Subtitle
-          const _Subtitle(),
-          const SizedBox(height: 24),
-
           // Plan cards
           ...List.generate(vm.plans.length, (i) {
             return Padding(
@@ -177,16 +189,22 @@ class _Header extends StatelessWidget {
             onPressed: () => Navigator.of(context).pop(),
           ),
 
-          // Title with crown
-          const Expanded(
+          // Title with gold crown asset
+          Expanded(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('👑 ', style: TextStyle(fontSize: 18)),
-                Text(
+                Image.asset(
+                  'assets/icons/subscription_crown_gold.png',
+                  width: 22,
+                  height: 22,
+                  color: _kGold,
+                ),
+                const SizedBox(width: 8),
+                const Text(
                   'One Subscription',
                   style: TextStyle(
-                    color: _kOrange,
+                    color: _kGold,
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.2,
@@ -318,61 +336,61 @@ class _PlanCard extends StatelessWidget {
                 width: isSelected ? 1.5 : 1,
               ),
             ),
-            child: Row(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Plan details
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        plan.planName,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: isSelected ? _kText : const Color(0xFF374151),
-                        ),
-                      ),
-                      if (plan.hasDiscount) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          plan.originalPriceDisplay,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: _kSubText,
-                            decoration: TextDecoration.lineThrough,
-                            decorationColor: _kSubText,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        plan.priceDisplay,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: _kText,
-                        ),
-                      ),
-                      if (plan.description.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          plan.description,
-                          style: const TextStyle(
-                              fontSize: 13,
-                              color: _kSubText,
-                              height: 1.5),
-                        ),
-                      ],
-                    ],
+                Text(
+                  plan.planName,
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected ? _kText : const Color(0xFF374151),
                   ),
                 ),
-                const SizedBox(width: 12),
-
-                // Checkmark corner badge
-                _CheckBadge(selected: isSelected),
+                if (plan.hasDiscount) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    plan.originalPriceDisplay,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: _kSubText,
+                      decoration: TextDecoration.lineThrough,
+                      decorationColor: _kSubText,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  plan.priceDisplay,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: _kText,
+                  ),
+                ),
+                if (plan.description.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    plan.description,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: _kSubText,
+                        height: 1.5),
+                  ),
+                ],
               ],
+            ),
+          ),
+
+          // Check badge — bottom-right corner overlay
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: ClipRRect(
+              borderRadius: const BorderRadius.only(
+                bottomRight: Radius.circular(12),
+              ),
+              child: _CheckBadge(selected: isSelected),
             ),
           ),
 
@@ -413,33 +431,30 @@ class _CheckBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: SizedBox(
-        width: 52,
-        height: 52,
-        child: Stack(
-          children: [
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: CustomPaint(
-                size: const Size(52, 52),
-                painter: _TrianglePainter(
-                    color: selected ? _kGreen : const Color(0xFFD1D5DB)),
-              ),
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: Stack(
+        children: [
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: CustomPaint(
+              size: const Size(52, 52),
+              painter: _TrianglePainter(
+                  color: selected ? _kGreen : const Color(0xFFD1D5DB)),
             ),
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: Icon(
-                Icons.check_rounded,
-                size: 16,
-                color: selected ? Colors.white : const Color(0xFF9CA3AF),
-              ),
+          ),
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: Icon(
+              Icons.check_rounded,
+              size: 16,
+              color: selected ? Colors.white : const Color(0xFF9CA3AF),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

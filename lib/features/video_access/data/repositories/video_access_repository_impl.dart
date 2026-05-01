@@ -32,7 +32,7 @@ class VideoAccessRepositoryImpl implements VideoAccessRepository {
   }) {
     final safeIndex = episodeIndex < 0 ? 0 : episodeIndex;
 
-    // Rule 1 — first video is ALWAYS free, regardless of monetization.
+    // Rule 1 — first video is always free (no login or subscription required).
     if (safeIndex == 0) return VideoAccessStatus.free;
 
     // Rule 2 & 3 — monetization 5: free once logged in, login wall for guests.

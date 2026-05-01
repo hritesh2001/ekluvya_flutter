@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/utils/logger.dart';
 import '../../../../services/api_service.dart';
@@ -30,12 +31,14 @@ import 'class_selector_widget.dart';
 import 'content_section_widget.dart';
 import '../../../../features/bookmarks/presentation/view/bookmarks_screen.dart';
 import '../../../../features/search/presentation/view/search_screen.dart';
+import '../../../../features/auth/presentation/view/manage_devices_screen.dart';
 import '../../../../features/explore/presentation/view/explore_screen.dart';
 import 'subject_chips_widget.dart';
 import '../../../../../widgets/app_toast.dart';
 import '../../../../../widgets/custom_bottom_nav_bar.dart';
 import '../../../profile/presentation/view/edit_profile_screen.dart';
 import '../../../subscription/presentation/view/subscription_plans_screen.dart';
+import '../../../../../screens/app_settings_screen.dart';
 
 // ── Brand gradient — exactly matches the EKLUVYA logo colours ─────────────────
 //   Deep orange (#FF5722) on the left → brand pink (#E91E63) on the right.
@@ -343,10 +346,7 @@ class _CourseContent extends StatelessWidget {
 
 // ── Row 1 — Brand row ─────────────────────────────────────────────────────────
 
-/// ≡   [app-logo icon]  EKLUVYA   (blank balance)
-///
-/// The icon is rendered with a white colour filter so it reads on the gradient.
-/// "EKLUVYA" is white with wide letter-spacing, matching the design.
+/// ≡   [logo.png — white tint]   (blank balance)
 class _BrandRow extends StatelessWidget {
   const _BrandRow({required this.onMenuTap, required this.drawerAnim});
   final VoidCallback onMenuTap;
@@ -379,43 +379,25 @@ class _BrandRow extends StatelessWidget {
             ),
           ),
 
-          // ── Centred logo + wordmark ────────────────────────────────
+          // ── Centred logo.png tinted white ──────────────────────────
           Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // App icon (app-logo.png) tinted white
-                ColorFiltered(
-                  colorFilter: const ColorFilter.mode(
-                    Colors.white,
-                    BlendMode.srcIn,
-                  ),
-                  child: Image.asset(
-                    'assets/icons/app-logo.png',
-                    width: 26,
-                    height: 26,
-                  ),
+            child: Center(
+              child: ColorFiltered(
+                colorFilter: const ColorFilter.mode(
+                  Colors.white,
+                  BlendMode.srcIn,
                 ),
-
-                const SizedBox(width: 8),
-
-                // "EKLUVYA" wordmark
-                const Text(
-                  'EKLUVYA',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2.5,
-                  ),
+                child: Image.asset(
+                  'assets/icons/logo.png',
+                  height: 60,
+                  fit: BoxFit.contain,
                 ),
-              ],
+              ),
             ),
           ),
 
-          // ── Right balance (same width as hamburger) ────────────────
-          const SizedBox(width: 24),
+          // ── Right balance (mirrors hamburger width) ────────────────
+          const SizedBox(width: 32),
         ],
       ),
     );
@@ -939,6 +921,39 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
+// ── Privacy Policy launcher ───────────────────────────────────────────────────
+
+Future<void> _launchPrivacyPolicy() async {
+  final uri = Uri.parse('https://ott.ekluvya.guru/privacy-policy/mobile');
+  try {
+    await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+  } catch (_) {
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+}
+
+// ── Rate Us launcher ─────────────────────────────────────────────────────────
+
+Future<void> _launchRateUs() async {
+  final market = Uri.parse('market://details?id=com.ekluvya.android');
+  final web    = Uri.parse(
+    'https://play.google.com/store/apps/details?id=com.ekluvya.android',
+  );
+  try {
+    if (await canLaunchUrl(market)) {
+      await launchUrl(market);
+    } else {
+      await launchUrl(web, mode: LaunchMode.externalApplication);
+    }
+  } catch (_) {
+    try {
+      await launchUrl(web, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+}
+
 // ── Sliding drawer panel ──────────────────────────────────────────────────────
 
 const Color _drawerAvatarBlue = Color(0xFF4A90E2);
@@ -1048,7 +1063,7 @@ class _DrawerPanel extends StatelessWidget {
                               const Text(
                                 'SUBSCRIBE',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: Color(0xFFFFD700),
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,
                                   letterSpacing: 1.2,
@@ -1102,28 +1117,51 @@ class _DrawerPanel extends StatelessWidget {
                             icon: Icons.settings_outlined,
                             title: 'App Settings',
                             subtitle: 'Take control and customize your app',
-                            onTap: onClose,
+                            onTap: () {
+                              onClose();
+                              if (!loggedIn) {
+                                Navigator.of(context).pushNamed('/login');
+                              } else {
+                                Navigator.of(context)
+                                    .push(AppSettingsScreen.route());
+                              }
+                            },
                           ),
                           const _DrawerDivider(),
                           _DrawerItem(
                             icon: Icons.star_border_rounded,
                             title: 'Rate us on Play Store',
                             subtitle: 'Let us know your rating for us',
-                            onTap: onClose,
+                            onTap: () {
+                              onClose();
+                              _launchRateUs();
+                            },
                           ),
                           const _DrawerDivider(),
                           _DrawerItem(
                             icon: Icons.devices_outlined,
                             title: 'Manage Devices',
                             subtitle: 'The devices and browsers you signed in are listed here',
-                            onTap: onClose,
+                            onTap: () {
+                              onClose();
+                              if (!loggedIn) {
+                                Navigator.of(context).pushNamed('/login');
+                              } else {
+                                Navigator.of(context).push(
+                                  ManageDevicesScreen.route(context),
+                                );
+                              }
+                            },
                           ),
                           const _DrawerDivider(),
                           _DrawerItem(
                             icon: Icons.description_outlined,
                             title: 'Privacy Policy',
                             subtitle: 'Our terms of use & Agreements',
-                            onTap: onClose,
+                            onTap: () {
+                              onClose();
+                              _launchPrivacyPolicy();
+                            },
                           ),
 
                           // Log out — only when logged in

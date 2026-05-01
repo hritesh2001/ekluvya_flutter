@@ -76,6 +76,10 @@ class _StudentPasswordScreenState extends State<StudentPasswordScreen> {
     sessionVM.seedSubscriptionFromLogin(
       authVM.isUserSubscribed,
       profilePictureUrl: authVM.loginProfilePictureUrl,
+      userType: authVM.loginUserType,
+      className: authVM.loginClassName,
+      schoolName: authVM.loginSchoolName,
+      schoolAddress: authVM.loginSchoolAddress,
     );
 
     await sessionVM.runPostLoginFlow();

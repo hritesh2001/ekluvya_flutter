@@ -27,6 +27,10 @@ class SessionViewModel extends ChangeNotifier {
   static const _kUserName           = 'session_user_name';
   static const _kProfilePicture     = 'session_profile_picture';
   static const _kDefaultProfileId   = 'session_default_profile_id';
+  static const _kUserType           = 'session_user_type';
+  static const _kClassName          = 'session_class_name';
+  static const _kSchoolName         = 'session_school_name';
+  static const _kSchoolAddress      = 'session_school_address';
 
   // Fires when a 401 response forces the user to be logged out.
   // NetworkGuard subscribes to this and navigates to /login.
@@ -60,6 +64,12 @@ class SessionViewModel extends ChangeNotifier {
   String _profilePictureRelPath = '';
   // default_profile._id from the profile API — used by Watch History.
   String _defaultProfileId = '';
+  // Raw user_type from login response (e.g. "b2b", "b2c").
+  String _userType = '';
+  // Class + school fields from B2B student-login response.
+  String _className = '';
+  String _schoolName = '';
+  String _schoolAddress = '';
   int _deviceCount = 0;
   int _deviceLimit = 2;
 
@@ -70,6 +80,10 @@ class SessionViewModel extends ChangeNotifier {
   // ── Getters ────────────────────────────────────────────────────────────────
   bool get isLoggedIn => _sessionState == SessionState.loggedIn;
   bool get isSubscribed => _isSubscribed;
+  bool get isB2b => _userType.toLowerCase() == 'b2b';
+  String get className => _className;
+  String get schoolName => _schoolName;
+  String get schoolAddress => _schoolAddress;
   bool get isDeviceRestricted => _isDeviceRestricted;
   bool get isRunningPostLogin => _isRunningPostLogin;
   String? get postLoginError => _postLoginError;
@@ -142,12 +156,19 @@ class SessionViewModel extends ChangeNotifier {
     bool isSubscribed, {
     String profilePictureUrl = '',
     String userName = '',
+    String userType = '',
+    String className = '',
+    String schoolName = '',
+    String schoolAddress = '',
   }) {
     _sessionState = SessionState.loggedIn;
     _isSubscribed = isSubscribed;
     if (profilePictureUrl.isNotEmpty) _profilePictureRelPath = profilePictureUrl;
     if (userName.isNotEmpty) _userName = userName;
-    // Persist immediately so the state survives an app restart.
+    if (userType.isNotEmpty) _userType = userType;
+    if (className.isNotEmpty) _className = className;
+    if (schoolName.isNotEmpty) _schoolName = schoolName;
+    if (schoolAddress.isNotEmpty) _schoolAddress = schoolAddress;
     unawaited(_savePersistedUserData());
     notifyListeners();
   }
@@ -316,6 +337,10 @@ class SessionViewModel extends ChangeNotifier {
     _userName = '';
     _profilePictureRelPath = '';
     _defaultProfileId = '';
+    _userType = '';
+    _className = '';
+    _schoolName = '';
+    _schoolAddress = '';
     notifyListeners();
     unawaited(_api.clearToken());
     unawaited(_api.clearRefreshToken());
@@ -439,6 +464,10 @@ class SessionViewModel extends ChangeNotifier {
         prefs.setString(_kUserName, _userName),
         prefs.setString(_kProfilePicture, _profilePictureRelPath),
         prefs.setString(_kDefaultProfileId, _defaultProfileId),
+        prefs.setString(_kUserType, _userType),
+        prefs.setString(_kClassName, _className),
+        prefs.setString(_kSchoolName, _schoolName),
+        prefs.setString(_kSchoolAddress, _schoolAddress),
       ]);
     } catch (e) {
       AppLogger.warning(_tag, '_savePersistedUserData failed: $e');
@@ -450,10 +479,14 @@ class SessionViewModel extends ChangeNotifier {
   Future<void> _restorePersistedUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _isSubscribed         = prefs.getBool(_kIsSubscribed)         ?? false;
-      _userName             = prefs.getString(_kUserName)            ?? '';
+      _isSubscribed          = prefs.getBool(_kIsSubscribed)        ?? false;
+      _userName              = prefs.getString(_kUserName)           ?? '';
       _profilePictureRelPath = prefs.getString(_kProfilePicture)    ?? '';
-      _defaultProfileId     = prefs.getString(_kDefaultProfileId)   ?? '';
+      _defaultProfileId      = prefs.getString(_kDefaultProfileId)  ?? '';
+      _userType              = prefs.getString(_kUserType)           ?? '';
+      _className             = prefs.getString(_kClassName)          ?? '';
+      _schoolName            = prefs.getString(_kSchoolName)         ?? '';
+      _schoolAddress         = prefs.getString(_kSchoolAddress)      ?? '';
       AppLogger.info(
         _tag,
         'Restored: subscribed=$_isSubscribed name="$_userName" '
@@ -473,6 +506,10 @@ class SessionViewModel extends ChangeNotifier {
         prefs.remove(_kUserName),
         prefs.remove(_kProfilePicture),
         prefs.remove(_kDefaultProfileId),
+        prefs.remove(_kUserType),
+        prefs.remove(_kClassName),
+        prefs.remove(_kSchoolName),
+        prefs.remove(_kSchoolAddress),
       ]);
     } catch (e) {
       AppLogger.warning(_tag, '_clearPersistedUserData failed: $e');

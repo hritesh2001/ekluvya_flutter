@@ -69,6 +69,16 @@ class SearchApiService {
       items = (decoded['data'] ?? decoded['hits']) as List? ?? const [];
     }
 
+    // Log raw fields of the first result so we know what the API actually returns.
+    if (items.isNotEmpty && items.first is Map<String, dynamic>) {
+      final first = items.first as Map<String, dynamic>;
+      AppLogger.info(_tag, 'search result[0] keys: ${first.keys.toList()}');
+      AppLogger.info(_tag, 'search result[0] slug="${first['slug']}" '
+          'course_id="${first['course_id']}" class_id="${first['class_id']}" '
+          'subject_id="${first['subject_id']}" '
+          'hls="${first['hls_playlist_url']}"');
+    }
+
     return items
         .whereType<Map<String, dynamic>>()
         .map(SearchResultModel.fromJson)

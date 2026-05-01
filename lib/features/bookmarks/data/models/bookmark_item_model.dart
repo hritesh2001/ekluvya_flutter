@@ -9,6 +9,8 @@ class BookmarkItemModel {
     required this.isWatchLater,
     required this.monetization,
     required this.isUserSubscribed,
+    this.slug = '',
+    this.hlsUrl = '',
   });
 
   final String episodeId;
@@ -18,6 +20,15 @@ class BookmarkItemModel {
   final bool isWatchLater;
   final int monetization;
   final bool isUserSubscribed;
+
+  /// Video slug — used with WatchApiService.fetchEpisode() to get a fresh HLS URL.
+  final String slug;
+
+  /// Direct HLS URL — used as a fallback when slug is unavailable.
+  final String hlsUrl;
+
+  /// Returns true when this item has enough data to attempt playback.
+  bool get isPlayable => slug.isNotEmpty || hlsUrl.isNotEmpty;
 
   factory BookmarkItemModel.fromJson(Map<String, dynamic> json) {
     return BookmarkItemModel(
@@ -29,6 +40,8 @@ class BookmarkItemModel {
           json['is_watch_later'] == 1 || json['is_watch_later'] == true,
       monetization: (json['monetization'] as num?)?.toInt() ?? 0,
       isUserSubscribed: json['is_user_subscribed'] == true,
+      slug: json['slug']?.toString() ?? json['episode_slug']?.toString() ?? '',
+      hlsUrl: json['hls_playlist_url']?.toString() ?? '',
     );
   }
 

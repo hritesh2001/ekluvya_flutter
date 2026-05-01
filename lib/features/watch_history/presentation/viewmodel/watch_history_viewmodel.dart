@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/utils/logger.dart';
@@ -107,70 +109,58 @@ class WatchHistoryViewModel extends ChangeNotifier {
     }
   }
 
-  // ── Clear all (pessimistic — UI only clears after API confirms) ────────────
+  // ── Clear all (optimistic — UI clears immediately, API call is fire-and-forget)
   //
-  // Design decision: unlike removeItem (which is optimistic for UX fluency),
-  // clearAll waits for the backend to confirm before touching the UI.
-  //
-  // Why: clearAll is a high-stakes, non-recoverable action across ALL platforms.
-  // Clearing the UI before the server responds would hide the true sync state
-  // and make cross-platform debugging impossible. If the server fails, items
-  // stay visible so the user knows the deletion did NOT propagate to web.
+  // Mirrors removeItem: optimistic UI update first, then backend sync.
+  // The deleteStore filter prevents cleared items from reappearing on any
+  // subsequent re-fetch even if the backend is slow to propagate.
 
   Future<void> clearAll() async {
     if (_isBusy) return;
-    _isBusy = true;
-    notifyListeners(); // disables CLEAR ALL button while in flight
 
     final profileId = _sessionVM.defaultProfileId;
+    final token = await _authApi.getToken() ?? '';
 
+    if (token.isEmpty) {
+      AppLogger.warning(_tag, 'clearAll ✗ no token — aborting');
+      return;
+    }
+
+    AppLogger.info(
+      _tag,
+      'clearAll ▶  '
+      'profile_id: ${profileId.isNotEmpty ? profileId : "(empty)"}  '
+      'items: ${_items.length}',
+    );
+
+    // ── Step 1: Optimistic update — clear UI immediately ───────────────────
+    final mediaIds = _items.map((i) => i.mediaId).toSet();
+    _items.clear();
+    _state = WatchHistoryLoadState.loaded;
+
+    // Persist deletion intent so items don't reappear on re-fetch even if
+    // the backend is slow to propagate.
+    await _deleteStore.markAllDeleted(mediaIds);
+    notifyListeners();
+
+    // ── Step 2: Backend sync ───────────────────────────────────────────────
     try {
-      final token = await _authApi.getToken() ?? '';
-
-      AppLogger.info(
-        _tag,
-        'clearAll ▶  '
-        'profile_id: ${profileId.isNotEmpty ? profileId : "(empty)"}  '
-        'token: ${token.length > 8 ? "${token.substring(0, 8)}…" : "(too short)"}  '
-        'items: ${_items.length}',
-      );
-
-      if (token.isEmpty) {
-        AppLogger.warning(_tag, 'clearAll ✗ no token — aborting');
-        return;
-      }
-
-      // ── Step 1: Backend call — source of truth ──────────────────────────
       await _api.clearAll(token: token, profileId: profileId);
-
-      AppLogger.info(_tag, 'clearAll ✓ backend confirmed deletion');
-
-      // ── Step 2: Backend confirmed → update UI + persist deletion filter ──
-      //   markAllDeleted so deleted items don't reappear if the backend is
-      //   slow to propagate (e.g. on next fetch before server index updates).
-      final mediaIds = _items.map((i) => i.mediaId).toSet();
-      await _deleteStore.markAllDeleted(mediaIds);
-      _items.clear();
-      _state = WatchHistoryLoadState.loaded;
-
+      // Reset the delete filter immediately so re-watched videos (same mediaId)
+      // are not silently filtered on the next fetch. cleanupAbsent() cannot
+      // remove an ID that re-appears in the API response, so without this reset
+      // a re-watched video would remain hidden by the stale delete filter.
+      await _deleteStore.reset();
+      AppLogger.info(_tag, 'clearAll ✓ backend confirmed deletion, filter reset');
     } catch (e) {
-      // API failed — leave items intact so UI reflects real backend state.
-      // Cross-platform note: if items remain here, they also remain on web.
-      AppLogger.warning(
-        _tag,
-        'clearAll ✗ API error — items NOT cleared (backend unchanged): $e',
-      );
-    } finally {
-      _isBusy = false;
-      notifyListeners();
+      // Backend failed — UI is already cleared and the deleteStore filter
+      // keeps items hidden. Log the error; the user has already seen items go.
+      AppLogger.warning(_tag, 'clearAll ✗ API error (UI already cleared): $e');
     }
 
-    // ── Step 3: Silent re-fetch to confirm backend now returns empty ────────
-    // deleteStore filter ensures items don't reappear even if backend is slow.
-    // This also resets the filter once the API confirms an empty response.
-    if (_state == WatchHistoryLoadState.loaded && _items.isEmpty) {
-      await _fetchInternal(showSpinner: false);
-    }
+    // ── Step 3: Silent re-fetch to let the backend confirm empty state ─────
+    // deleteStore ensures items stay hidden even if backend is slow.
+    unawaited(_fetchInternal(showSpinner: false));
   }
 
   // ── Private ────────────────────────────────────────────────────────────────

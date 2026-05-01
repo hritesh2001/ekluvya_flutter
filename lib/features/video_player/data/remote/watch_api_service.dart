@@ -16,16 +16,21 @@ import '../../../channel/data/models/video_item_model.dart';
 class WatchApiService {
   static const _tag = 'WatchApiService';
 
-  Future<VideoItemModel> fetchEpisode(String slug) async {
+  Future<VideoItemModel> fetchEpisode(String slug, {String? token}) async {
     final url = '${AppConstants.mediaBaseUrl}/watch/series/series-data/$slug';
-    AppLogger.info(_tag, 'GET episode → $url');
+    AppLogger.info(_tag, 'GET episode → $url (auth=${token != null && token.isNotEmpty})');
+
+    final headers = <String, String>{};
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
 
     try {
       final res = await http
-          .get(Uri.parse(url))
+          .get(Uri.parse(url), headers: headers.isEmpty ? null : headers)
           .timeout(AppConstants.apiTimeout);
 
-      AppLogger.info(_tag, 'Episode response ${res.statusCode}');
+      AppLogger.info(_tag, 'Episode response ${res.statusCode} body-start="${res.body.substring(0, res.body.length.clamp(0, 120))}"');
       return _parse(res);
     } catch (e, st) {
       return _handleError(e, st, 'fetchEpisode');

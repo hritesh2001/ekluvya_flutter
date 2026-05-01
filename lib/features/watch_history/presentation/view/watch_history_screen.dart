@@ -3,6 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../features/auth/presentation/viewmodel/session_viewmodel.dart';
+import '../../../../features/subscription/presentation/view/subscription_plans_screen.dart';
+import '../../../../features/video_access/domain/entities/video_access_status.dart';
+import '../../../../features/video_access/domain/usecases/check_video_access_usecase.dart';
+import '../../../../features/video_player/data/remote/watch_api_service.dart';
+import '../../../../features/video_player/presentation/view/video_player_screen.dart';
 import '../../data/models/watch_history_item_model.dart';
 import '../viewmodel/watch_history_viewmodel.dart';
 
@@ -227,6 +233,9 @@ class _WatchHistoryBody extends StatefulWidget {
 
 class _WatchHistoryBodyState extends State<_WatchHistoryBody>
     with WidgetsBindingObserver {
+  final _watchApi = WatchApiService();
+  String? _loadingMediaId;
+
   @override
   void initState() {
     super.initState();
@@ -243,6 +252,58 @@ class _WatchHistoryBodyState extends State<_WatchHistoryBody>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       context.read<WatchHistoryViewModel>().refreshWatchHistory();
+    }
+  }
+
+  Future<void> _onVideoTap(WatchHistoryItemModel item) async {
+    if (_loadingMediaId != null) return;
+
+    final sessionVM = context.read<SessionViewModel>();
+    final accessUC  = context.read<CheckVideoAccessUseCase>();
+    final nav       = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    // An unsubscribed user can only have history for a monetization-8 video if
+    // it was the first (free) episode. Use episodeIndex 1 only when subscribed.
+    final status = accessUC(
+      episodeIndex: (item.monetization == 8 && sessionVM.isSubscribed) ? 1 : 0,
+      isLoggedIn:   sessionVM.isLoggedIn,
+      isSubscribed: sessionVM.isSubscribed,
+      monetization: item.monetization,
+    );
+    switch (status) {
+      case VideoAccessStatus.requiresLogin:
+        nav.pushNamed('/login');
+        return;
+      case VideoAccessStatus.requiresSubscription:
+        nav.push(SubscriptionPlansScreen.route(context));
+        return;
+      case VideoAccessStatus.free:
+      case VideoAccessStatus.unlocked:
+        break;
+    }
+
+    if (item.slug.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Video not available.')),
+      );
+      return;
+    }
+
+    setState(() => _loadingMediaId = item.mediaId);
+    try {
+      final episode = await _watchApi.fetchEpisode(item.slug);
+      if (!mounted) return;
+      await nav.push(VideoPlayerScreen.route(episode));
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not load video. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _loadingMediaId = null);
     }
   }
 
@@ -317,6 +378,8 @@ class _WatchHistoryBodyState extends State<_WatchHistoryBody>
               item: item,
               cardWidth: cardWidth,
               onRemove: () => vm.removeItem(item.mediaId),
+              onPlay: () => _onVideoTap(item),
+              isLoading: _loadingMediaId == item.mediaId,
             );
           },
         );
@@ -332,18 +395,25 @@ class _HistoryCard extends StatelessWidget {
     required this.item,
     required this.cardWidth,
     required this.onRemove,
+    required this.onPlay,
+    required this.isLoading,
   });
 
   final WatchHistoryItemModel item;
   final double cardWidth;
   final VoidCallback onRemove;
+  final VoidCallback onPlay;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
     // 16:9 thumbnail — same ratio as ContentCardWidget.thumbAspect
     final thumbHeight = cardWidth * _kThumbRatio;
 
-    return Column(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: isLoading ? null : onPlay,
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -420,6 +490,24 @@ class _HistoryCard extends StatelessWidget {
                   child: _ProgressBar(fraction: item.progressFraction),
                 ),
 
+                // Loading overlay — shown while fetchEpisode is in progress
+                if (isLoading)
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: const Color(0x80000000),
+                      child: Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: _kYellow,
+                            strokeWidth: 2.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
                 // X remove button — top-right
                 Positioned(
                   top: 6,
@@ -462,6 +550,7 @@ class _HistoryCard extends StatelessWidget {
           ),
         ),
       ],
+      ),
     );
   }
 }

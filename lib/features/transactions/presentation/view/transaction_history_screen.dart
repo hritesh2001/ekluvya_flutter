@@ -9,11 +9,13 @@ import '../viewmodel/transaction_history_viewmodel.dart';
 
 // ── Brand constants ───────────────────────────────────────────────────────────
 
-const _kGreen     = Color(0xFF2ECC71);
-const _kGreenBg   = Color(0xFFE8F8EE);
-const _kDark      = Color(0xFF1A1A1A);
-const _kGray      = Color(0xFF9E9E9E);
-const _kDivider   = Color(0xFFF0F0F0);
+const _kGreen       = Color(0xFF2ECC71);
+const _kGreenBg     = Color(0xFFE8F8EE);
+const _kDark        = Color(0xFF1A1A1A);
+const _kGray        = Color(0xFF9E9E9E);
+const _kDivider     = Color(0xFFF0F0F0);
+const _kCouponBg    = Color(0xFFFFFBEB);
+const _kCouponBorder= Color(0xFFFFE082);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -212,118 +214,250 @@ class _TransactionCard extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Left: success icon ──────────────────────────────────────
               _SuccessIcon(isExpired: tx.isExpired),
 
               const SizedBox(width: 14),
 
-              // ── Middle: plan details ────────────────────────────────────
+              // ── Right: all text content ─────────────────────────────────
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Plan name
-                    Text(
-                      tx.planName.isNotEmpty ? tx.planName : 'Subscription',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: _kDark,
-                      ),
+
+                    // ── Row 1: Plan name  ·  Amount ─────────────────────
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            tx.planName.isNotEmpty
+                                ? tx.planName
+                                : 'Subscription',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: _kDark,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          tx.amountDisplay,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: _kDark,
+                          ),
+                        ),
+                      ],
                     ),
 
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
 
-                    // Type
+                    // ── Row 2: Type ──────────────────────────────────────
                     RichText(
                       text: const TextSpan(
                         children: [
                           TextSpan(
                             text: 'Type:  ',
                             style: TextStyle(
-                                fontSize: 12,
-                                color: _kGray,
-                                fontWeight: FontWeight.w400),
+                              fontSize: 12,
+                              color: _kGray,
+                              fontWeight: FontWeight.w400,
+                            ),
                           ),
                           TextSpan(
                             text: 'Subscription',
                             style: TextStyle(
-                                fontSize: 12,
-                                color: _kGray,
-                                fontWeight: FontWeight.w400),
+                              fontSize: 12,
+                              color: _kGray,
+                              fontWeight: FontWeight.w400,
+                            ),
                           ),
                         ],
                       ),
                     ),
 
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
 
-                    // Transaction ID
+                    // ── Row 3: Transaction ID (label + value same line) ──
                     if (tx.transactionId.isNotEmpty)
-                      Text(
-                        'Transaction ID:  ${tx.transactionId}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: _kGray,
-                          fontWeight: FontWeight.w400,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Transaction ID:  ',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _kGray,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              tx.transactionId,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: _kGray,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
 
-                    const SizedBox(height: 5),
+                    const SizedBox(height: 6),
 
-                    // Expiry label
-                    _ExpiryLabel(label: tx.expiryLabel, expired: tx.isExpired),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: 10),
-
-              // ── Right: amount + status ──────────────────────────────────
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    tx.amountDisplay,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: _kDark,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  if (tx.statusDisplay.isNotEmpty)
+                    // ── Row 4: Expiry (left)  ·  Status (right) ─────────
                     Row(
-                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Text(
-                          'Status:  ',
-                          style: TextStyle(fontSize: 11, color: _kGray),
+                        _ExpiryLabel(
+                          label: tx.expiryLabel,
+                          expired: tx.isExpired,
                         ),
-                        Text(
-                          tx.statusDisplay,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: _kGreen,
+                        const Spacer(),
+                        if (tx.statusDisplay.isNotEmpty)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Status:  ',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: _kGray,
+                                ),
+                              ),
+                              Text(
+                                tx.statusDisplay,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _kGreen,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
                       ],
                     ),
-                ],
+
+                  ],
+                ),
               ),
             ],
           ),
         ),
 
+        // ── Coupon section (conditional) ───────────────────────────────
+        if (tx.hasCoupon)
+          _CouponSection(
+            couponCode:      tx.couponCode,
+            discountDisplay: tx.couponDiscountDisplay,
+          ),
+
         const Divider(height: 1, thickness: 0.5, color: _kDivider),
       ],
+    );
+  }
+}
+
+// ── Coupon section ────────────────────────────────────────────────────────────
+
+class _CouponSection extends StatelessWidget {
+  const _CouponSection({
+    required this.couponCode,
+    required this.discountDisplay,
+  });
+
+  final String couponCode;
+  final String discountDisplay;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: _kCouponBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _kCouponBorder),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              // ── Applied coupon code ───────────────────────────────────
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'APPLIED COUPON CODE',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: _kGray,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        couponCode,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: _kDark,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const VerticalDivider(
+                  width: 1, thickness: 0.5, color: _kCouponBorder),
+
+              // ── Coupon discount amount ────────────────────────────────
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'COUPON DISCOUNT',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: _kGray,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        discountDisplay,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: _kGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

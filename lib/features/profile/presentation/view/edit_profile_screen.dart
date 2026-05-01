@@ -291,16 +291,132 @@ class _EditProfileViewState extends State<_EditProfileView> {
         body: Consumer<EditProfileViewModel>(
           builder: (context, vm, _) => Column(
             children: [
-              _GradientHeader(
-                topPad: topPad,
-                vm: vm,
-                onBack: () => Navigator.of(context).pop(),
-                onPickImage: _pickImage,
+              // ── Header + avatar overlay ──────────────────────────────────
+              // Flutter's Stack hit-test area equals its layout bounds, NOT
+              // its paint-overflow area.  To make the full avatar circle
+              // tappable we must bring the avatar inside the Stack's layout
+              // bounds by giving the Stack a height of
+              //   gradientHeight + _kAvatarRadius
+              // via a transparent SizedBox spacer child.  The avatar is then
+              // Positioned(bottom: 0), so its center sits exactly at the
+              // gradient's bottom edge — visually identical to before.
+              Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.bottomCenter,
+                children: [
+                  // Non-positioned column gives the Stack its layout height:
+                  //   gradient height + _kAvatarRadius (lower half of avatar)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildGradientBar(context, topPad),
+                      const SizedBox(height: _kAvatarRadius),
+                    ],
+                  ),
+                  // Avatar sits at bottom: 0 of the extended Stack, so its
+                  // center is exactly at the gradient's bottom edge.
+                  Positioned(
+                    bottom: 0,
+                    child: _buildAvatarCircle(vm),
+                  ),
+                ],
               ),
+
+              // 12 px gap between avatar bottom and the body content.
+              const SizedBox(height: 12),
+
+              // ── Main scrollable / fixed content ─────────────────────────
               Expanded(child: _buildBody(context, vm, bottomPad)),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ── Gradient bar (no avatar) ────────────────────────────────────────────────
+
+  Widget _buildGradientBar(BuildContext context, double topPad) {
+    return Container(
+      width: double.infinity,
+      height: topPad + kToolbarHeight + 48,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_kPink, _kOrange],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(height: topPad),
+          SizedBox(
+            height: kToolbarHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 20),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                const Expanded(
+                  child: Text(
+                    'Edit Profile',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const SizedBox(width: 48),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Avatar circle widget (reused by both regular + B2B flows) ──────────────
+
+  Widget _buildAvatarCircle(EditProfileViewModel vm) {
+    return GestureDetector(
+      onTap: _pickImage,
+      behavior: HitTestBehavior.opaque,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: _kAvatarRadius * 2,
+            height: _kAvatarRadius * 2,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFFE0E0E0),
+              boxShadow: [
+                BoxShadow(
+                    color: Color(0x30000000),
+                    blurRadius: 12,
+                    offset: Offset(0, 4)),
+              ],
+            ),
+            child: ClipOval(child: _AvatarImage(vm: vm)),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration:
+                  const BoxDecoration(shape: BoxShape.circle, color: _kPink),
+              child: const Icon(Icons.camera_alt_rounded,
+                  color: Colors.white, size: 16),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -339,6 +455,9 @@ class _EditProfileViewState extends State<_EditProfileView> {
       );
     }
 
+    final isB2b = context.read<SessionViewModel>().isB2b || vm.isB2b;
+    if (isB2b) return _buildBodyB2b(context, vm, bottomPad);
+
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 0, 20, bottomPad + 24),
       child: Form(
@@ -346,10 +465,7 @@ class _EditProfileViewState extends State<_EditProfileView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Space so content clears the overlapping avatar.
-            const SizedBox(height: _kAvatarRadius + 12),
-
-            // Name displayed below avatar (e.g. "Hritesh_usr-rJA3aQRql").
+            // Name displayed below avatar (spacing handled by outer Column).
             _buildAvatarName(vm),
 
             const SizedBox(height: 20),
@@ -383,6 +499,97 @@ class _EditProfileViewState extends State<_EditProfileView> {
         ),
       ),
     );
+  }
+
+  // ── B2B body (read-only, no save/delete) ───────────────────────────────────
+
+  Widget _buildBodyB2b(
+      BuildContext context, EditProfileViewModel vm, double bottomPad) {
+    final sessionVM = context.watch<SessionViewModel>();
+    final isSubscribed = sessionVM.isSubscribed;
+    final plan = vm.plan ??
+        const SubscriptionPlanModel(
+          planName: 'Active Subscription',
+          expiryText: '',
+          priceDisplay: '',
+          isActive: true,
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Fixed white header — never scrolls ────────────────────────────
+        // White background blocks any scroll content from bleeding through
+        // the avatar area.
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Name below avatar (spacing handled by outer Column).
+              _buildAvatarName(vm),
+
+              const SizedBox(height: 20),
+
+              // Current Plan — only when subscribed.
+              if (isSubscribed) ...[
+                _SubscriptionCard(plan: plan),
+                const SizedBox(height: 16),
+              ],
+
+              const Divider(height: 1, thickness: 0.5, color: Color(0xFFEEEEEE)),
+            ],
+          ),
+        ),
+
+        // ── Scrollable fields ─────────────────────────────────────────────
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPad + 24),
+            children: _buildB2bFields(vm, sessionVM),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildB2bFields(
+      EditProfileViewModel vm, SessionViewModel sessionVM) {
+    // Resolves a field value: vm first, then session fallback, then '-'.
+    String resolve(String key) {
+      final v = vm.fieldValue(key);
+      if (v.isNotEmpty) return v;
+      switch (key) {
+        case 'class_name':     return sessionVM.className.isNotEmpty     ? sessionVM.className     : '-';
+        case 'school_name':    return sessionVM.schoolName.isNotEmpty    ? sessionVM.schoolName    : '-';
+        case 'school_address': return sessionVM.schoolAddress.isNotEmpty ? sessionVM.schoolAddress : '-';
+        default:               return '-';
+      }
+    }
+
+    return vm.buildFieldListB2b().map((field) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _FieldLabel(field.label),
+            const SizedBox(height: 6),
+            InputDecorator(
+              decoration: _underlineDecoration(),
+              child: Text(
+                resolve(field.key),
+                style: const TextStyle(
+                    color: _kFieldLabel,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400),
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
   }
 
   // ── Avatar name ────────────────────────────────────────────────────────────
@@ -578,114 +785,6 @@ class _EditProfileViewState extends State<_EditProfileView> {
       );
 }
 
-// ── Gradient header + avatar ──────────────────────────────────────────────────
-
-class _GradientHeader extends StatelessWidget {
-  const _GradientHeader({
-    required this.topPad,
-    required this.vm,
-    required this.onBack,
-    required this.onPickImage,
-  });
-
-  final double topPad;
-  final EditProfileViewModel vm;
-  final VoidCallback onBack;
-  final VoidCallback onPickImage;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.bottomCenter,
-      children: [
-        // Gradient background
-        Container(
-          width: double.infinity,
-          height: topPad + kToolbarHeight + 48,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [_kPink, _kOrange],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(height: topPad),
-              SizedBox(
-                height: kToolbarHeight,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white, size: 20),
-                      onPressed: onBack,
-                    ),
-                    const Expanded(
-                      child: Text(
-                        'Edit Profile',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    const SizedBox(width: 48),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Avatar overlapping the gradient bottom edge
-        Positioned(
-          bottom: -_kAvatarRadius,
-          child: GestureDetector(
-            onTap: onPickImage,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: _kAvatarRadius * 2,
-                  height: _kAvatarRadius * 2,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Color(0xFFE0E0E0),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Color(0x30000000),
-                          blurRadius: 12,
-                          offset: Offset(0, 4)),
-                    ],
-                  ),
-                  child: ClipOval(child: _AvatarImage(vm: vm)),
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 30,
-                    height: 30,
-                    decoration: const BoxDecoration(
-                        shape: BoxShape.circle, color: _kPink),
-                    child: const Icon(Icons.camera_alt_rounded,
-                        color: Colors.white, size: 16),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 // ── Avatar image with fallback ────────────────────────────────────────────────
 
 class _AvatarImage extends StatelessWidget {
@@ -783,31 +882,11 @@ class _SubscriptionCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                           color: _kFieldText),
                     ),
-                    if (plan.expiryDateDisplay.isNotEmpty) ...[
+                    if (plan.expiryLabel.isNotEmpty) ...[
                       const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Text(
-                            'EXPIRE IN',
-                            style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: _kGreen,
-                                letterSpacing: 0.8),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            plan.expiryDateDisplay,
-                            style: const TextStyle(
-                                fontSize: 12, color: _kFieldLabel),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Plan expires on ${plan.expiryDateDisplay}',
-                        style: const TextStyle(
-                            fontSize: 11, color: _kFieldLabel),
+                      _PlanExpiryLabel(
+                        label:   plan.expiryLabel,
+                        expired: plan.isExpired,
                       ),
                     ],
                   ],
@@ -843,6 +922,61 @@ class _SubscriptionCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Plan expiry label ─────────────────────────────────────────────────────────
+
+class _PlanExpiryLabel extends StatelessWidget {
+  const _PlanExpiryLabel({required this.label, required this.expired});
+
+  final String label;
+  final bool expired;
+
+  @override
+  Widget build(BuildContext context) {
+    if (expired) {
+      return Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: _kFieldLabel,
+          letterSpacing: 0.4,
+        ),
+      );
+    }
+
+    // Split "EXPIRE IN " from "120 DAYS" — prefix lighter, suffix bolder.
+    final parts  = label.split(RegExp(r'(?<=IN )|(?=\d)'));
+    final prefix = parts.length > 1 ? parts.first : label;
+    final rest   = parts.length > 1 ? parts.skip(1).join() : '';
+
+    return RichText(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: prefix,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: _kGreen,
+              letterSpacing: 0.4,
+            ),
+          ),
+          if (rest.isNotEmpty)
+            TextSpan(
+              text: rest,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: _kGreen,
+                letterSpacing: 0.4,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -273,6 +273,8 @@ class _VideoGrid extends StatelessWidget {
                 thumbnailUrl: v.thumbnailUrl,
                 cardWidth: cardWidth,
                 accessStatus: status,
+                episodeId: v.id,
+                seasonId: channel.id,
               ),
               if (isLoading)
                 Positioned.fill(

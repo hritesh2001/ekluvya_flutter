@@ -10,6 +10,8 @@ class WatchHistoryItemModel {
     required this.thumbnailUrl,
     required this.videoDuration,
     required this.watchedDuration,
+    this.slug = '',
+    this.monetization = 0,
   });
 
   final String id;
@@ -19,6 +21,12 @@ class WatchHistoryItemModel {
   final int videoDuration;    // seconds
   final int watchedDuration;  // seconds
 
+  /// Episode slug — used with WatchApiService.fetchEpisode() to get HLS URL.
+  final String slug;
+
+  /// Monetization type from master_details_id — used for subscription gating.
+  final int monetization;
+
   WatchHistoryItemModel copyWith({String? thumbnailUrl}) =>
       WatchHistoryItemModel(
         id:              id,
@@ -27,6 +35,8 @@ class WatchHistoryItemModel {
         thumbnailUrl:    thumbnailUrl ?? this.thumbnailUrl,
         videoDuration:   videoDuration,
         watchedDuration: watchedDuration,
+        slug:            slug,
+        monetization:    monetization,
       );
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -67,10 +77,11 @@ class WatchHistoryItemModel {
         ? s(json['title'])
         : s(master['title']);
 
-    // Thumbnail: master_details_id → new_thumbnail_images → default → tp
-    // tp is the portrait-cropped variant used for video cards.
-    // Fallback chain: tp → to → tl (all from default format only)
-    final thumbnailPath = _pickThumb(master);
+    // Thumbnail priority:
+    //   1. thumbnail_image — direct absolute URL now provided by backend
+    //   2. master_details_id → new_thumbnail_images → default → {tp, to, tl}
+    final directThumb  = s(json['thumbnail_image']);
+    final thumbnailPath = directThumb.isNotEmpty ? directThumb : _pickThumb(master);
     final thumbnailUrl  = thumbnailPath.isEmpty
         ? ''
         : thumbnailPath.startsWith('http')
@@ -89,6 +100,8 @@ class WatchHistoryItemModel {
       thumbnailUrl:    thumbnailUrl,
       videoDuration:   i(json['video_duration']),
       watchedDuration: i(json['watched_duration']),
+      slug:            s(json['slug']),
+      monetization:    i(master['monetization']),
     );
   }
 

@@ -51,29 +51,83 @@ class SubscriptionPlanItem {
     Map<String, dynamic> json, {
     bool isRecommended = false,
   }) {
-    String s(String key) => json[key]?.toString().trim() ?? '';
-    double d(String key) => double.tryParse(s(key)) ?? 0.0;
+    // Helper: read string from root OR from a nested map.
+    String s(String key, [Map<String, dynamic>? nested]) {
+      final v = (nested ?? json)[key];
+      if (v == null) return '';
+      final str = v.toString().trim();
+      return str == 'null' ? '' : str;
+    }
 
-    final id = s('id').isNotEmpty ? s('id') : s('plan_id');
-    final name =
-        s('plan_name').isNotEmpty ? s('plan_name') : s('name');
+    double d(String key, [Map<String, dynamic>? nested]) =>
+        double.tryParse(s(key, nested)) ?? 0.0;
+
+    // Some APIs nest price fields under a `prices` object.
+    final pricesMap = json['prices'] is Map<String, dynamic>
+        ? json['prices'] as Map<String, dynamic>
+        : null;
+
+    final id   = s('id').isNotEmpty ? s('id') : s('plan_id');
+    final name = s('plan_name').isNotEmpty ? s('plan_name') : s('name');
     final desc = s('description').isNotEmpty
         ? s('description')
         : s('plan_description');
-    final dur =
-        s('plan_duration').isNotEmpty ? s('plan_duration') : s('duration');
-    final price = d('price');
-    final mrp = d('mrp') > 0 ? d('mrp') : d('original_price');
+
+    // Duration: explicit label > days field (at root or in prices).
+    final rawDur = s('plan_duration').isNotEmpty
+        ? s('plan_duration')
+        : s('duration');
+    final daysRaw = json['days'] ?? pricesMap?['days'];
+    final days = (daysRaw as num?)?.toInt() ?? 0;
+    final dur = rawDur.isNotEmpty ? rawDur : _daysToLabel(days);
+
+    // ── Price resolution ────────────────────────────────────────────────────
+    // Priority: prices.amount > root amount > root price
+    // discounted_price is the DISCOUNT AMOUNT (not the final price).
+    // finalPrice = amount - discounted_price
+    final amount = pricesMap != null
+        ? d('amount', pricesMap)
+        : d('amount');
+
+    final discountAmount = pricesMap != null
+        ? d('discounted_price', pricesMap)
+        : d('discounted_price');
+
+    final legacyPrice = d('price', pricesMap) > 0
+        ? d('price', pricesMap)
+        : d('price');
+
+    final finalPrice = amount > 0
+        ? (amount - discountAmount).clamp(0.0, double.infinity)
+        : legacyPrice;
+
+    // MRP / original price = amount (before discount).
+    final mrp = amount > 0
+        ? amount
+        : (d('mrp', pricesMap) > 0
+            ? d('mrp', pricesMap)
+            : (d('original_price', pricesMap) > 0
+                ? d('original_price', pricesMap)
+                : d('mrp') > 0 ? d('mrp') : d('original_price')));
 
     return SubscriptionPlanItem(
       id: id,
       planName: name.isNotEmpty ? name : 'Subscription Plan',
-      price: price,
+      price: finalPrice,
       originalPrice: mrp,
       description: desc,
       duration: dur,
       isRecommended: isRecommended,
     );
+  }
+
+  static String _daysToLabel(int days) {
+    if (days == 365) return 'year';
+    if (days >= 28 && days <= 31) return 'month';
+    if (days == 7) return 'week';
+    if (days == 1) return 'day';
+    if (days > 1) return '$days days';
+    return '';
   }
 }
 

@@ -38,6 +38,9 @@ dependencies:
   # Keep screen awake during video playback
   wakelock_plus: ^1.2.8
 
+  # Google Fonts — Poppins (no bundled files needed)
+  google_fonts: ^6.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -49,6 +52,7 @@ flutter:
   assets:
     - assets/icons/
     - assets/images/
+
 
 flutter_icons:
   android: true

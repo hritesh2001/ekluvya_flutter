@@ -21,6 +21,75 @@ class SubscriptionPlanModel {
 
   bool get hasPrice => priceDisplay.isNotEmpty;
 
+  // ── Days-remaining helpers (mirrors TransactionModel) ──────────────────────
+
+  /// Parses [expiryText] to a local [DateTime], using the same multi-format
+  /// logic as [expiryDateDisplay]. Returns null when parsing fails.
+  DateTime? get endDate {
+    if (expiryText.isEmpty) return null;
+
+    // DD/MM/YYYY
+    final slash = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(expiryText);
+    if (slash != null) {
+      return DateTime.tryParse(
+          '${slash.group(3)}-${slash.group(2)}-${slash.group(1)}');
+    }
+
+    // DD-MM-YYYY
+    final dash = RegExp(r'^(\d{2})-(\d{2})-(\d{4})$').firstMatch(expiryText);
+    if (dash != null) {
+      return DateTime.tryParse(
+          '${dash.group(3)}-${dash.group(2)}-${dash.group(1)}');
+    }
+
+    // Unix timestamp (seconds or milliseconds)
+    final asInt = int.tryParse(expiryText);
+    if (asInt != null && asInt > 0) {
+      try {
+        final ms = asInt > 9999999999 ? asInt : asInt * 1000;
+        return DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
+      } catch (_) {}
+    }
+
+    // ISO-8601 / space-separated datetime
+    try {
+      final normalised = expiryText.contains('T')
+          ? expiryText
+          : expiryText.replaceFirst(' ', 'T');
+      return DateTime.parse(normalised).toLocal();
+    } catch (_) {}
+
+    // YYYY-MM-DD substring
+    final ymd = RegExp(r'(\d{4})-(\d{2})-(\d{2})').firstMatch(expiryText);
+    if (ymd != null) {
+      return DateTime.tryParse(
+          '${ymd.group(1)}-${ymd.group(2)}-${ymd.group(3)}');
+    }
+
+    return null;
+  }
+
+  int get daysRemaining {
+    final d = endDate;
+    if (d == null) return -1;
+    final endDay = DateTime(d.year, d.month, d.day);
+    final today  = DateTime.now();
+    final todayDay = DateTime(today.year, today.month, today.day);
+    return endDay.difference(todayDay).inDays;
+  }
+
+  /// "EXPIRE IN X DAYS", "EXPIRING TODAY", "EXPIRED", or '' when unknown.
+  String get expiryLabel {
+    if (expiryText.isEmpty) return '';
+    final d = daysRemaining;
+    if (d < 0)  return 'EXPIRED';
+    if (d == 0) return 'EXPIRING TODAY';
+    if (d == 1) return 'EXPIRE IN 1 DAY';
+    return 'EXPIRE IN $d DAYS';
+  }
+
+  bool get isExpired => daysRemaining < 0;
+
   /// Converts [expiryText] → "DD/MM/YYYY".
   /// Handles ISO-8601, space-separated datetime, Unix timestamps (s/ms),
   /// DD/MM/YYYY, DD-MM-YYYY, and bare YYYY-MM-DD strings.
